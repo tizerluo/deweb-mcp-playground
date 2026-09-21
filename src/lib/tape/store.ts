@@ -1,23 +1,12 @@
 import { create } from "zustand";
 import { t } from "@/lib/i18n";
 import { sha256Hex, sleep } from "@/lib/utils";
-import {
-  GENESIS_BLOCK,
-  PROTOCOL_FEE,
-  SERVICES,
-  USER,
-  serviceBySlug,
-} from "./catalog";
-import { runComplete, runTranslate, readPriceTape } from "./rpc";
+import { GENESIS_BLOCK, PROTOCOL_FEE, SERVICES, USER, serviceBySlug } from "./catalog";
+import { runJevDecide } from "@/lib/jev/decide";
+import { readPriceTape } from "./rpc";
 import { randomNonce, requestIdHex, toHex } from "./id";
-import type {
-  CallTrace,
-  HubMessage,
-  Identity,
-  LeaderEntry,
-  TraceEvent,
-  TraceKind,
-} from "./types";
+import type { JevAnswer, JevDecisionReason } from "@/lib/jev/protocol";
+import type { CallTrace, HubMessage, Identity, LeaderEntry, TraceEvent, TraceKind } from "./types";
 import type { PriceResult } from "./rpc";
 
 const LS = "tapeapi-v1";
@@ -60,6 +49,21 @@ function savePersist(s: PersistShape) {
   localStorage.setItem(LS, JSON.stringify(s));
 }
 
+/** Snapshot the persisted slice of the store (single writer: this module). */
+function persistSnapshot(state: {
+  bem: number;
+  treasury: number;
+  balances: Record<string, number>;
+  board: LeaderEntry[];
+}) {
+  savePersist({
+    bem: state.bem,
+    treasury: state.treasury,
+    balances: state.balances,
+    board: state.board,
+  });
+}
+
 function reduced() {
   if (typeof window === "undefined") return false;
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -75,6 +79,32 @@ type CallArgs = {
   params: Record<string, unknown>;
   extraBem?: number;
   pay?: boolean;
+};
+
+/**
+ * One JEV decision as the playground books it: a paid TAP-10 round trip whose
+ * request carries the question and whose reply carries the typed answer.
+ * `charge` is what actually left the wallet (0 when the escrow was refunded);
+ * `envelope.paidBem` is what the request message shows on the hub.
+ */
+export type JevRound = {
+  ok: boolean;
+  reason: JevDecisionReason | null;
+  message: string;
+  answers: Record<string, JevAnswer> | null;
+  model: string | null;
+  latencyMs: number;
+  charge: number;
+  cached: boolean;
+  envelope: {
+    requestId: string;
+    from: string;
+    to: string;
+    block: number;
+    paidBem: number;
+    reqDigest: string;
+    resDigest: string | null;
+  };
 };
 
 type TapeState = {
@@ -93,6 +123,13 @@ type TapeState = {
   faucet: () => void;
   refreshPrice: () => Promise<void>;
   call: (args: CallArgs) => Promise<{ ok: boolean; result?: unknown; error?: string }>;
+  /**
+   * Per-tick path for the JEV demos: same envelope and billing as `call`, but
+   * it never takes the global `busy` lock and never sleeps between steps, so a
+   * fixed-clock demo can run one decision per tick while the rest of the page
+   * stays usable.
+   */
+  jevDecision: (params: Record<string, unknown>) => Promise<JevRound>;
 };
 
 function eid() {
@@ -124,6 +161,141 @@ export const useTape = create<TapeState>((set, get) => {
     refreshPrice: async () => {
       const price = await readPriceTape();
       set({ price });
+    },
+    jevDecision: async (params) => {
+      const svc = serviceBySlug("jev");
+      const method = svc?.methods.find((m) => m.name === "decide");
+      const from = get().identity.endpoint;
+      const to = svc?.endpoint ?? "";
+      const block = get().block;
+      const envelope = {
+        requestId: "",
+        from,
+        to,
+        block,
+        paidBem: 0,
+        reqDigest: "",
+        resDigest: null as string | null,
+      };
+      const failed = (reason: JevDecisionReason | null, message: string): JevRound => ({
+        ok: false,
+        reason,
+        message,
+        answers: null,
+        model: null,
+        latencyMs: 0,
+        charge: 0,
+        cached: false,
+        envelope,
+      });
+
+      if (!svc || !method) return failed(null, t("err.noService"));
+
+      const charge = method.priceBem;
+      const fee = charge * PROTOCOL_FEE;
+      const net = charge - fee;
+      if (get().bem < charge) return failed("insufficient_bem", "");
+
+      // Escrow first, then send: the request letter exists before the model is
+      // asked, exactly like the paid `call` path — just without its pacing.
+      set((s) => ({ bem: s.bem - charge, locked: s.locked + charge }));
+      const nonce = randomNonce();
+      const requestId = await requestIdHex({ from, to, nonce, params });
+      const reqPayload = {
+        kind: "deweb.req/v0",
+        id: requestId,
+        nonce: toHex(nonce),
+        method: "decide",
+        params,
+        replyTo: from,
+        deadline: block + method.timeoutBlocks,
+      };
+      const reqDigest = await sha256Hex(JSON.stringify(reqPayload));
+      const reqMsg: HubMessage = {
+        id: eid(),
+        kind: "deweb.req/v0",
+        from,
+        to,
+        block,
+        digest: reqDigest,
+        payload: reqPayload,
+        paidBem: charge,
+      };
+      set((s) => ({ messages: [reqMsg, ...s.messages].slice(0, 40) }));
+
+      const started = Date.now();
+      let result: Awaited<ReturnType<typeof runJevDecide>> | null = null;
+      let transportError = "";
+      try {
+        result = await runJevDecide({ data: params });
+      } catch (err) {
+        transportError = err instanceof Error ? err.message : t("err.fail");
+      }
+      const latencyMs = Date.now() - started;
+      const sent = { ...envelope, requestId, paidBem: charge, reqDigest };
+
+      const refund = () => {
+        set((s) => ({ bem: s.bem + charge, locked: Math.max(0, s.locked - charge) }));
+        persistSnapshot(get());
+      };
+
+      if (!result || !result.ok) {
+        const reason: JevDecisionReason = result ? result.reason : "network";
+        const message = result ? result.message : transportError;
+        refund();
+        return {
+          ok: false,
+          reason,
+          message,
+          answers: null,
+          model: null,
+          latencyMs,
+          charge: 0,
+          cached: false,
+          envelope: sent,
+        };
+      }
+
+      const resPayload = {
+        kind: "deweb.res/v0",
+        id: requestId,
+        ok: true,
+        result: {
+          backend: result.backend,
+          model: result.model,
+          answers: result.answers,
+        },
+      };
+      const resDigest = await sha256Hex(JSON.stringify(resPayload));
+      const resMsg: HubMessage = {
+        id: eid(),
+        kind: "deweb.res/v0",
+        from: to,
+        to: from,
+        block: get().block,
+        digest: resDigest,
+        payload: resPayload,
+        ref: reqMsg.id,
+      };
+      set((s) => ({
+        messages: [resMsg, ...s.messages].slice(0, 40),
+        locked: Math.max(0, s.locked - charge),
+        treasury: s.treasury + fee,
+        balances: { ...s.balances, [to]: (s.balances[to] ?? 0) + net },
+      }));
+      persistSnapshot(get());
+
+      return {
+        ok: true,
+        reason: null,
+        message: "",
+        answers: result.answers,
+        model: result.model,
+        latencyMs,
+        charge,
+        cached: result.cached,
+        envelope: { ...sent, resDigest },
+      };
     },
     call: async (args) => {
       const svc = serviceBySlug(args.slug);
@@ -161,9 +333,7 @@ export const useTape = create<TapeState>((set, get) => {
           json,
         };
         set((s) => ({
-          traces: s.traces.map((t) =>
-            t.id === traceId ? { ...t, events: [...t.events, ev] } : t,
-          ),
+          traces: s.traces.map((t) => (t.id === traceId ? { ...t, events: [...t.events, ev] } : t)),
         }));
       };
 
@@ -171,22 +341,12 @@ export const useTape = create<TapeState>((set, get) => {
         set((s) => ({
           busy: false,
           traces: s.traces.map((t) =>
-            t.id === traceId
-              ? { ...t, ...patch, finishedBlock: get().block }
-              : t,
+            t.id === traceId ? { ...t, ...patch, finishedBlock: get().block } : t,
           ),
         }));
       };
 
-      const persist = () => {
-        const s = get();
-        savePersist({
-          bem: s.bem,
-          treasury: s.treasury,
-          balances: s.balances,
-          board: s.board,
-        });
-      };
+      const persist = () => persistSnapshot(get());
 
       const runWork = async (): Promise<unknown> => {
         if (svc.slug === "price") {
@@ -201,23 +361,16 @@ export const useTape = create<TapeState>((set, get) => {
             updatedAt: price.fetchedAt,
           };
         }
-        if (svc.slug === "translate") {
-          const r = await runTranslate({
-            data: {
-              text: String(args.params.text ?? ""),
-              from: String(args.params.from ?? "auto"),
-              to: String(args.params.to ?? "zh"),
-            },
-          });
-          if (!r.ok) throw new Error(r.error);
-          return { text: r.text };
-        }
-        if (svc.slug === "ai") {
-          const r = await runComplete({
-            data: { prompt: String(args.params.prompt ?? "") },
-          });
-          if (!r.ok) throw new Error(r.error);
-          return { text: r.text };
+        if (svc.slug === "jev") {
+          const r = await runJevDecide({ data: args.params });
+          if (!r.ok) throw new Error(t(`jev.err.${r.reason}`));
+          return {
+            backend: r.backend,
+            model: r.model,
+            answers: r.answers,
+            latencyMs: r.latencyMs,
+            usage: r.usage,
+          };
         }
         if (svc.slug === "game" && args.method === "board") {
           return { board: get().board.slice(0, 8) };
@@ -233,9 +386,7 @@ export const useTape = create<TapeState>((set, get) => {
             at: Date.now(),
           };
           set((s) => ({
-            board: [...s.board, entry]
-              .sort((a, b) => b.score - a.score)
-              .slice(0, 12),
+            board: [...s.board, entry].sort((a, b) => b.score - a.score).slice(0, 12),
           }));
           return { saved: entry, board: get().board.slice(0, 8) };
         }

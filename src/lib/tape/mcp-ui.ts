@@ -1,5 +1,4 @@
 import { create } from "zustand";
-import { NPC_DEFAULT } from "./mcp-manifest";
 
 export type AgentLog = {
   id: string;
@@ -13,14 +12,22 @@ export type ConsentAsk = {
   resolve: (ok: boolean) => void;
 };
 
+/** The last typed answer a page-level tool put on display. */
+export type PageDecision = {
+  tool: string;
+  choice: string;
+  confidence: number | null;
+  probabilities: { label: string; value: number }[];
+};
+
 type McpUi = {
-  npc: string;
+  decision: PageDecision | null;
   score: number;
   lastTool: string | null;
   lastResult: unknown;
   consent: ConsentAsk | null;
   log: AgentLog[];
-  setNpc: (npc: string) => void;
+  setDecision: (decision: PageDecision | null) => void;
   setScore: (score: number) => void;
   setLast: (tool: string, result: unknown) => void;
   askConsent: (tool: string, priceBem: number) => Promise<boolean>;
@@ -29,13 +36,13 @@ type McpUi = {
 };
 
 export const useMcpUi = create<McpUi>((set) => ({
-  npc: NPC_DEFAULT,
+  decision: null,
   score: 88,
   lastTool: null,
   lastResult: null,
   consent: null,
   log: [],
-  setNpc: (npc) => set({ npc }),
+  setDecision: (decision) => set({ decision }),
   setScore: (score) => set({ score }),
   setLast: (tool, result) => set({ lastTool: tool, lastResult: result }),
   askConsent: (tool, priceBem) =>

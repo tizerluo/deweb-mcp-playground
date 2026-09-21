@@ -23,29 +23,22 @@ export const MCP_TOOLS: McpToolDef[] = [
     via: { file: "/data/price.json", service: "price", method: "get" },
   },
   {
-    name: "translate_dialogue",
-    description: "Translate a line. TAP-10 send to #9102@0.",
+    name: "jev_decide",
+    description:
+      "Ask JEV to pick one option for a situation. Typed choice, no text. TAP-10 send to #9104@0.",
     inputSchema: {
       type: "object",
       properties: {
-        text: { type: "string", description: "Source line" },
-        to: { type: "string", description: "Target language code, e.g. zh, ja" },
+        state: { type: "string", description: "The situation to judge" },
+        question: { type: "string", description: "What to decide" },
+        options: {
+          type: "string",
+          description: "Comma-separated options to choose between (2-8)",
+        },
       },
-      required: ["text", "to"],
+      required: ["state", "question", "options"],
     },
-    via: { endpoint: "#9102@0", method: "translate", service: "translate" },
-  },
-  {
-    name: "ask_npc",
-    description: "Ask the NPC a short question. TAP-10 send to #9104@0.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        prompt: { type: "string", description: "What the player says" },
-      },
-      required: ["prompt"],
-    },
-    via: { endpoint: "#9104@0", method: "complete", service: "ai" },
+    via: { endpoint: "#9104@0", method: "decide", service: "jev" },
   },
   {
     name: "save_score",
@@ -68,9 +61,6 @@ export const MCP_MANIFEST = {
   origin: "https://8801-0.tapekit.org",
   tools: MCP_TOOLS,
 };
-
-export const NPC_DEFAULT =
-  "The circuit is live. Hash the NAND, keep the tape.";
 
 export function isFileVia(via: McpVia): via is Extract<McpVia, { file: string }> {
   return "file" in via;

@@ -1,15 +1,14 @@
 import type { ServiceDef } from "./types";
 
-export const USER: { identity: import("./types").Identity; startBem: number } =
-  {
-    identity: {
-      endpoint: "#8801@0",
-      vanity: "arcade.0.tape",
-      tokenId: 8801,
-      cpu: 0,
-    },
-    startBem: 12,
-  };
+export const USER: { identity: import("./types").Identity; startBem: number } = {
+  identity: {
+    endpoint: "#8801@0",
+    vanity: "arcade.0.tape",
+    tokenId: 8801,
+    cpu: 0,
+  },
+  startBem: 12,
+};
 
 export const SERVICES: ServiceDef[] = [
   {
@@ -33,31 +32,12 @@ export const SERVICES: ServiceDef[] = [
     ],
   },
   {
-    slug: "translate",
-    vanity: "translate.tape",
-    name: "翻译",
-    headline: "按句付费的翻译摊",
-    blurb: "游戏或站点把原文塞进对方信箱，附上 BEM。提供方的程序盯着信箱，译完回一封信。",
-    mode: "C",
-    modeLabel: "接单",
-    endpoint: "#9102@0",
-    cpu: 0,
-    tokenId: 9102,
-    methods: [
-      {
-        name: "translate",
-        summary: "翻译一段话",
-        priceBem: 0.02,
-        timeoutBlocks: 20,
-      },
-    ],
-  },
-  {
-    slug: "ai",
-    vanity: "ai.tape",
-    name: "AI",
-    headline: "把模型租出去",
-    blurb: "调用方不必自己申请模型密钥。按次把提示词发到 ai.tape，结果加密写回信箱。",
+    slug: "jev",
+    vanity: "jev.tape",
+    name: "JEV",
+    headline: "把判断力租出去",
+    blurb:
+      "不写作文，只做判断。调用方把局势和选项发过去，JEV 回一个类型化选择：选哪个、每个选项的概率、置信度。按次付费，每步一次。",
     mode: "C",
     modeLabel: "接单",
     endpoint: "#9104@0",
@@ -65,10 +45,10 @@ export const SERVICES: ServiceDef[] = [
     tokenId: 9104,
     methods: [
       {
-        name: "complete",
-        summary: "短回答",
-        priceBem: 0.08,
-        timeoutBlocks: 24,
+        name: "decide",
+        summary: "在选项里选一个",
+        priceBem: 0.01,
+        timeoutBlocks: 12,
       },
     ],
   },

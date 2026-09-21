@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { MCP_MANIFEST, MCP_TOOLS, NPC_DEFAULT, isFileVia, type McpToolDef } from "@/lib/tape/mcp-manifest";
+import { MCP_MANIFEST, MCP_TOOLS, isFileVia, type McpToolDef } from "@/lib/tape/mcp-manifest";
 import { useMcpUi } from "@/lib/tape/mcp-ui";
 import { useTape } from "@/lib/tape/store";
 import { getModelContext } from "@/lib/tape/webmcp";
@@ -29,7 +29,7 @@ export function WebMcpPlayground() {
 
 function SitePane() {
   const t = useT();
-  const npc = useMcpUi((s) => s.npc);
+  const decision = useMcpUi((s) => s.decision);
   const score = useMcpUi((s) => s.score);
   const lastTool = useMcpUi((s) => s.lastTool);
   const price = useTape((s) => s.price);
@@ -54,14 +54,45 @@ function SitePane() {
           </p>
         </div>
         <div>
-          <p className="text-[10px] font-medium uppercase tracking-wide text-subtle">{t("mcp.score")}</p>
+          <p className="text-[10px] font-medium uppercase tracking-wide text-subtle">
+            {t("mcp.score")}
+          </p>
           <p className="mt-1 font-mono text-base tabular-nums">{score}</p>
         </div>
       </div>
 
       <div className="mt-4 rounded-lg bg-raised p-4 shadow-[var(--shadow-border)]">
-        <p className="text-[10px] font-medium uppercase tracking-wide text-subtle">NPC</p>
-        <p className="mt-2 text-sm leading-relaxed">{npc}</p>
+        <p className="text-[10px] font-medium uppercase tracking-wide text-subtle">
+          {t("mcp.decision")}
+        </p>
+        {decision ? (
+          <>
+            <p className="mt-2 text-sm leading-relaxed">
+              {decision.choice}
+              {decision.confidence === null
+                ? ""
+                : ` · ${t("jev.confidence")} ${decision.confidence.toFixed(2)}`}
+            </p>
+            <div className="mt-2 grid gap-1">
+              {decision.probabilities.map((row) => (
+                <div key={row.label} className="grid grid-cols-[64px_1fr_44px] items-center gap-2">
+                  <span className="truncate font-mono text-[10px] text-subtle">{row.label}</span>
+                  <span className="h-1 overflow-hidden rounded-full bg-surface">
+                    <span
+                      className="block h-full bg-accent"
+                      style={{ width: `${Math.round(Math.min(1, row.value) * 100)}%` }}
+                    />
+                  </span>
+                  <span className="text-right font-mono text-[10px] tabular-nums text-muted">
+                    {row.value.toFixed(2)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </>
+        ) : (
+          <p className="mt-2 text-xs text-muted">{t("mcp.decisionEmpty")}</p>
+        )}
         {lastTool ? (
           <p className="mt-2 font-mono text-[10px] text-accent">last tool · {lastTool}</p>
         ) : null}
@@ -108,10 +139,7 @@ function AgentPane() {
   const tools = MCP_TOOLS;
   const [name, setName] = useState(tools[0]?.name ?? "get_price");
   const current = tools.find((t) => t.name === name) ?? tools[0];
-  const defaults = useMemo(
-    () => defaultArgs(current?.name ?? ""),
-    [current?.name],
-  );
+  const defaults = useMemo(() => defaultArgs(current?.name ?? ""), [current?.name]);
   const [args, setArgs] = useState<Record<string, string>>(defaults);
   const [busy, setBusy] = useState(false);
   const log = useMcpUi((s) => s.log);
@@ -187,9 +215,7 @@ function AgentPane() {
           {fields.map(([key, schema]) => (
             <div key={key} className="grid gap-1.5">
               <Label htmlFor={`mcp-${key}`}>{key}</Label>
-              {schema.type === "string" &&
-              key !== "to" &&
-              String(args[key] ?? "").length > 40 ? (
+              {schema.type === "string" && key !== "to" && String(args[key] ?? "").length > 40 ? (
                 <Textarea
                   id={`mcp-${key}`}
                   value={args[key] ?? ""}
@@ -257,11 +283,12 @@ function AgentPane() {
 }
 
 function defaultArgs(name: string): Record<string, string> {
-  if (name === "translate_dialogue") {
-    return { text: NPC_DEFAULT, to: "zh" };
-  }
-  if (name === "ask_npc") {
-    return { prompt: t("ai.sample") };
+  if (name === "jev_decide") {
+    return {
+      state: t("jev.sample.state"),
+      question: t("jev.sample.question"),
+      options: t("jev.sample.options"),
+    };
   }
   if (name === "save_score") {
     return { name: "arcade", score: "88" };

@@ -1,17 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { SnakeDemo } from "@/components/jev/snake-demo";
+import { CarDemo } from "@/components/jev/car-demo";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { useT } from "@/lib/i18n";
 import { SERVICES, serviceBySlug } from "@/lib/tape/catalog";
 import { useTape } from "@/lib/tape/store";
 import { formatBem, formatUsd } from "@/lib/utils";
 import type { ServiceDef } from "@/lib/tape/types";
-
-const LANG_IDS = ["auto", "zh", "en", "ja", "ko", "es", "fr"] as const;
 
 export function CallWorkspace({ slug }: { slug: string }) {
   const t = useT();
@@ -41,8 +40,7 @@ export function CallWorkspace({ slug }: { slug: string }) {
       </header>
       <div className="mt-6">
         {svc.slug === "price" ? <PricePanel svc={svc} /> : null}
-        {svc.slug === "translate" ? <TranslatePanel svc={svc} /> : null}
-        {svc.slug === "ai" ? <AiPanel svc={svc} /> : null}
+        {svc.slug === "jev" ? <JevPanel svc={svc} /> : null}
         {svc.slug === "game" ? <GamePanel svc={svc} /> : null}
         {svc.slug === "payment" ? <PayPanel svc={svc} /> : null}
       </div>
@@ -116,133 +114,30 @@ function PricePanel({ svc }: { svc: ServiceDef }) {
   );
 }
 
-function TranslatePanel({ svc }: { svc: ServiceDef }) {
+function JevPanel({ svc }: { svc: ServiceDef }) {
   const t = useT();
-  const [text, setText] = useState(t("translate.sample"));
-  const [from, setFrom] = useState("en");
-  const [to, setTo] = useState("zh");
-  const [out, setOut] = useState<string | null>(null);
-  const busy = useTape((s) => s.busy);
-  const call = useTape((s) => s.call);
-  const fee = svc.methods[0].priceBem;
-
+  const method = svc.methods[0];
   return (
-    <div className="grid gap-4">
-      <div className="grid gap-2">
-        <Label htmlFor="src">{t("translate.src")}</Label>
-        <Textarea
-          id="src"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          maxLength={500}
-        />
+    <div className="grid gap-6">
+      <p className="font-mono text-xs text-subtle">
+        {t("jev.method", {
+          name: method?.name ?? "decide",
+          n: formatBem(method?.priceBem ?? 0, 3),
+        })}
+      </p>
+      <p className="max-w-2xl text-sm leading-relaxed text-muted">{t("jev.panel.lead")}</p>
+      <div className="grid gap-2 border-t border-line pt-4">
+        <h3 className="text-xs font-medium uppercase tracking-wide text-subtle">
+          {t("jev.demo.one")}
+        </h3>
+        <SnakeDemo />
       </div>
-      <div className="grid grid-cols-2 gap-3">
-        <div className="grid gap-2">
-          <Label htmlFor="from">{t("translate.from")}</Label>
-          <select
-            id="from"
-            value={from}
-            onChange={(e) => setFrom(e.target.value)}
-            className="h-11 rounded-md border border-line bg-raised px-3 text-sm text-fg"
-          >
-            {LANG_IDS.map((id) => (
-              <option key={id} value={id}>
-                {t(`lang.${id}`)}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="grid gap-2">
-          <Label htmlFor="to">{t("translate.to")}</Label>
-          <select
-            id="to"
-            value={to}
-            onChange={(e) => setTo(e.target.value)}
-            className="h-11 rounded-md border border-line bg-raised px-3 text-sm text-fg"
-          >
-            {LANG_IDS.filter((id) => id !== "auto").map((id) => (
-              <option key={id} value={id}>
-                {t(`lang.${id}`)}
-              </option>
-            ))}
-          </select>
-        </div>
+      <div className="grid gap-2 border-t border-line pt-4">
+        <h3 className="text-xs font-medium uppercase tracking-wide text-subtle">
+          {t("jev.demo.two")}
+        </h3>
+        <CarDemo />
       </div>
-      <div className="flex flex-wrap items-center gap-3">
-        <Button
-          disabled={busy || !text.trim()}
-          onClick={async () => {
-            const r = await call({
-              slug: svc.slug,
-              method: "translate",
-              params: { text, from, to },
-            });
-            if (!r.ok) {
-              toast.error(r.error);
-              return;
-            }
-            const result = r.result as { text?: string };
-            setOut(result.text ?? "");
-          }}
-        >
-          {t("translate.call", { n: formatBem(fee, 2) })}
-        </Button>
-        <span className="text-xs text-subtle">{t("translate.hint")}</span>
-      </div>
-      {out ? (
-        <div className="rounded-lg bg-raised p-4 shadow-[var(--shadow-border)]">
-          <p className="text-xs text-muted">{t("translate.out")}</p>
-          <p className="mt-2 text-sm leading-relaxed">{out}</p>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function AiPanel({ svc }: { svc: ServiceDef }) {
-  const t = useT();
-  const [prompt, setPrompt] = useState(t("ai.sample"));
-  const [out, setOut] = useState<string | null>(null);
-  const busy = useTape((s) => s.busy);
-  const call = useTape((s) => s.call);
-  const fee = svc.methods[0].priceBem;
-
-  return (
-    <div className="grid gap-4">
-      <div className="grid gap-2">
-        <Label htmlFor="prompt">{t("ai.prompt")}</Label>
-        <Textarea
-          id="prompt"
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          maxLength={280}
-        />
-      </div>
-      <Button
-        disabled={busy || !prompt.trim()}
-        onClick={async () => {
-          const r = await call({
-            slug: svc.slug,
-            method: "complete",
-            params: { prompt },
-          });
-          if (!r.ok) {
-            toast.error(r.error);
-            return;
-          }
-          const result = r.result as { text?: string };
-          setOut(result.text ?? "");
-        }}
-      >
-        {t("ai.call", { n: formatBem(fee, 2) })}
-      </Button>
-      {out ? (
-        <div className="rounded-lg bg-raised p-4 shadow-[var(--shadow-border)]">
-          <p className="text-xs text-muted">ai.tape</p>
-          <p className="mt-2 text-sm leading-relaxed">{out}</p>
-        </div>
-      ) : null}
     </div>
   );
 }

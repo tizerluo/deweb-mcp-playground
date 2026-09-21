@@ -2,8 +2,24 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { IdentityBar } from "@/components/identity-bar";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/lib/i18n";
+import { JEV_REQUEST_EXAMPLE } from "@/lib/jev/protocol";
 
 export const Route = createFileRoute("/spec")({ component: SpecPage });
+
+/**
+ * The request shape the page documents: a `deweb.req/v0` envelope whose
+ * `params` is the JEV request. `params` is the exported example the sanitizer
+ * test exercises, so what the page shows is what the server accepts.
+ */
+const REQUEST_EXAMPLE = {
+  kind: "deweb.req/v0",
+  id: "0x…",
+  nonce: "0x…",
+  method: "decide",
+  params: JEV_REQUEST_EXAMPLE,
+  replyTo: "#8801@0",
+  deadline: 122_900_020,
+};
 
 function SpecPage() {
   const t = useT();
@@ -49,15 +65,9 @@ function SpecPage() {
 
         <section className="mt-10">
           <h2 className="text-lg font-medium">{t("spec.shape")}</h2>
-          <pre className="mt-4 overflow-auto rounded-lg bg-surface p-4 font-mono text-xs leading-relaxed text-muted shadow-[var(--shadow-border)]">{`{
-  "kind": "deweb.req/v0",
-  "id": "0x…",
-  "nonce": "0x…",
-  "method": "translate",
-  "params": { "text": "hello", "from": "en", "to": "zh" },
-  "replyTo": "#8801@0",
-  "deadline": 122900020
-}`}</pre>
+          <pre className="mt-4 overflow-auto rounded-lg bg-surface p-4 font-mono text-xs leading-relaxed text-muted shadow-[var(--shadow-border)]">
+            {JSON.stringify(REQUEST_EXAMPLE, null, 2)}
+          </pre>
         </section>
 
         <section className="mt-10">
@@ -75,9 +85,9 @@ function SpecPage() {
           <pre className="mt-4 overflow-auto rounded-lg bg-surface p-4 font-mono text-xs leading-relaxed text-muted shadow-[var(--shadow-border)]">{`{
   "webmcp": true,
   "tools": [{
-    "name": "translate_dialogue",
-    "inputSchema": { "type": "object", "required": ["text", "to"] },
-    "via": { "endpoint": "#9102@0", "method": "translate" }
+    "name": "jev_decide",
+    "inputSchema": { "type": "object", "required": ["state", "question", "options"] },
+    "via": { "endpoint": "#9104@0", "method": "decide" }
   }]
 }`}</pre>
         </section>
@@ -87,8 +97,8 @@ function SpecPage() {
             <Link to="/mcp">{t("spec.openMcp")}</Link>
           </Button>
           <Button variant="secondary" asChild>
-            <Link to="/s/$slug" params={{ slug: "translate" }}>
-              {t("spec.runTranslate")}
+            <Link to="/s/$slug" params={{ slug: "jev" }}>
+              {t("spec.openJev")}
             </Link>
           </Button>
           <Button variant="ghost" asChild>
