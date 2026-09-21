@@ -27,6 +27,20 @@ npm run dev            # http://127.0.0.1:8080
 
 `npm run build` then `npx vite preview` for a production check.
 
+`npm test` runs both suites (scripts and src). Cases that read the authoring
+sandbox's `.grok/` scaffolding skip when it is absent — as in a clean clone.
+
+## Sandbox scaffolding
+
+`src/lib/auth/*` is the app-builder sandbox's sign-in stack, and the router
+still mounts `AuthProvider` at the root (a passthrough today). Nothing in this
+playground uses the rest of it: no screen imports `SignInGate`, `UserButton`,
+`RedirectToSignIn` or `useCurrentUser`, so no route is gated and no sign-in is
+prompted for. The flag that would turn it on (`VITE_AUTH_ENABLED`) lives in the
+sandbox's `.grok/app-env.json`, which this repo does not ship. `npm run
+check:auth` is the piece worth keeping: it compares the flag a running dev
+server resolved against the one the next build will.
+
 ## What it is not
 
 - A deployed DeWEB site

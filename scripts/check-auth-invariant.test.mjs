@@ -13,6 +13,11 @@ import {
   probeDevAuthEnabled,
 } from "./check-auth-invariant.mjs";
 import { projectRoot } from "./with-app-env.mjs";
+import { SANDBOX_FILES, sandboxSkip } from "./sandbox-fixture.mjs";
+
+// The workspace copy of the sign-in flag is sandbox-only (`.grok/app-env.json`)
+// — see scripts/sandbox-fixture.mjs.
+const SHIPPED_APP_ENV = [SANDBOX_FILES.appEnv];
 
 /**
  * The JSON body `/__app-env` would serve. Do not start a real Vite server —
@@ -90,10 +95,14 @@ test("only a divergence warns the smoke verdict", () => {
   }
 });
 
-test("the build side resolves the template's shipped app-env", () => {
-  assert.equal(buildAuthEnabled(projectRoot(), {}), false);
-  assert.equal(buildAuthEnabled(projectRoot(), { VITE_AUTH_ENABLED: "true" }), true);
-});
+test(
+  "the build side resolves the template's shipped app-env",
+  { skip: sandboxSkip(projectRoot(), SHIPPED_APP_ENV) },
+  () => {
+    assert.equal(buildAuthEnabled(projectRoot(), {}), false);
+    assert.equal(buildAuthEnabled(projectRoot(), { VITE_AUTH_ENABLED: "true" }), true);
+  },
+);
 
 test("the CLI reports rather than silently passing when run via a symlink", async () => {
   // A check whose exit code is the whole signal must never no-op to 0 because
