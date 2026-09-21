@@ -6,6 +6,8 @@ Companion case for the unofficial draft:
 
 - [tizerluo/deweb-api-webmcp-draft](https://github.com/tizerluo/deweb-api-webmcp-draft)
 
+**Live demo:** https://deweb-mcp-playground.vercel.app
+
 This app is a **browser playground**. It shows how TAP-10 request/response content (`deweb.req/v0` / `deweb.res/v0`) and a WebMCP tool list (`/.tape/mcp.json`) would feel, without a mainnet send.
 
 | Layer                                           | In this repo                                        |
