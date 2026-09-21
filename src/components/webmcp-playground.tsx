@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,7 +9,8 @@ import { useMcpUi } from "@/lib/tape/mcp-ui";
 import { useTape } from "@/lib/tape/store";
 import { getModelContext } from "@/lib/tape/webmcp";
 import { WebMcpHost } from "@/components/webmcp-host";
-import { t, useT } from "@/lib/i18n";
+import { useT } from "@/lib/i18n";
+import { formatBem } from "@/lib/utils";
 
 export function WebMcpPlayground() {
   return (
@@ -94,7 +95,9 @@ function SitePane() {
           <p className="mt-2 text-xs text-muted">{t("mcp.decisionEmpty")}</p>
         )}
         {lastTool ? (
-          <p className="mt-2 font-mono text-[10px] text-accent">last tool · {lastTool}</p>
+          <p className="mt-2 font-mono text-[10px] text-accent">
+            {t("mcp.lastTool", { tool: lastTool })}
+          </p>
         ) : null}
       </div>
 
@@ -139,13 +142,17 @@ function AgentPane() {
   const tools = MCP_TOOLS;
   const [name, setName] = useState(tools[0]?.name ?? "get_price");
   const current = tools.find((t) => t.name === name) ?? tools[0];
-  const defaults = useMemo(() => defaultArgs(current?.name ?? ""), [current?.name]);
-  const [args, setArgs] = useState<Record<string, string>>(defaults);
+  // Only what the reader typed is stored. The untouched fields are recomputed
+  // on every render, so the JEV sample arguments follow the language instead of
+  // freezing the one the form was mounted with.
+  const [edited, setEdited] = useState<Record<string, string>>({});
+  const args = { ...defaultArgs(current?.name ?? "", t), ...edited };
   const [busy, setBusy] = useState(false);
   const log = useMcpUi((s) => s.log);
   const pushLog = useMcpUi((s) => s.pushLog);
   const lastResult = useMcpUi((s) => s.lastResult);
   const consent = useMcpUi((s) => s.consent);
+  const consentQueue = useMcpUi((s) => s.consentQueue);
   const tapeBusy = useTape((s) => s.busy);
 
   const fields = Object.entries(current?.inputSchema.properties ?? {});
@@ -170,24 +177,25 @@ function AgentPane() {
   return (
     <section className="rounded-xl bg-surface p-4 shadow-[var(--shadow-border)] sm:p-5">
       <div className="flex items-center justify-between gap-2">
-        <h2 className="text-base font-medium">Agent</h2>
+        <h2 className="text-base font-medium">{t("mcp.agentPane")}</h2>
         <Badge variant="mode">document.modelContext</Badge>
       </div>
       <p className="mt-2 text-xs text-muted">{t("mcp.agentHint")}</p>
 
       <div className="mt-4 flex flex-wrap gap-2">
-        {tools.map((t) => (
+        {tools.map((tool) => (
           <Button
-            key={t.name}
+            key={tool.name}
             type="button"
             size="sm"
-            variant={t.name === name ? "default" : "secondary"}
+            variant={tool.name === name ? "default" : "secondary"}
+            aria-pressed={tool.name === name}
             onClick={() => {
-              setName(t.name);
-              setArgs(defaultArgs(t.name));
+              setName(tool.name);
+              setEdited({});
             }}
           >
-            {t.name}
+            {tool.name}
           </Button>
         ))}
       </div>
@@ -198,7 +206,20 @@ function AgentPane() {
 
       {consent ? (
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-raised px-3 py-3 shadow-[var(--shadow-border)]">
-          <p className="text-xs text-muted">{t("mcp.consent", { tool: consent.tool })}</p>
+          <div>
+            <p className="text-xs text-muted">
+              {t("mcp.consent", {
+                tool: consent.tool,
+                to: consent.to,
+                n: formatBem(consent.priceBem, 3),
+              })}
+            </p>
+            {consentQueue > 0 ? (
+              <p className="mt-1 font-mono text-[10px] text-subtle" data-testid="mcp-consent-queue">
+                {t("mcp.consentQueued", { n: consentQueue })}
+              </p>
+            ) : null}
+          </div>
           <div className="flex gap-2">
             <Button size="sm" variant="secondary" onClick={() => consent.resolve(false)}>
               {t("mcp.deny")}
@@ -219,14 +240,14 @@ function AgentPane() {
                 <Textarea
                   id={`mcp-${key}`}
                   value={args[key] ?? ""}
-                  onChange={(e) => setArgs((s) => ({ ...s, [key]: e.target.value }))}
+                  onChange={(e) => setEdited((s) => ({ ...s, [key]: e.target.value }))}
                 />
               ) : (
                 <Input
                   id={`mcp-${key}`}
                   type={schema.type === "number" ? "number" : "text"}
                   value={args[key] ?? ""}
-                  onChange={(e) => setArgs((s) => ({ ...s, [key]: e.target.value }))}
+                  onChange={(e) => setEdited((s) => ({ ...s, [key]: e.target.value }))}
                 />
               )}
             </div>
@@ -282,12 +303,12 @@ function AgentPane() {
   );
 }
 
-function defaultArgs(name: string): Record<string, string> {
+function defaultArgs(name: string, tr: (key: string) => string): Record<string, string> {
   if (name === "jev_decide") {
     return {
-      state: t("jev.sample.state"),
-      question: t("jev.sample.question"),
-      options: t("jev.sample.options"),
+      state: tr("jev.sample.state"),
+      question: tr("jev.sample.question"),
+      options: tr("jev.sample.options"),
     };
   }
   if (name === "save_score") {

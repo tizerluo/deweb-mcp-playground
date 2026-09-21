@@ -20,6 +20,8 @@ type Props = {
   /** How long the window lasted, ms — the animation covers exactly one. */
   waitedMs: number;
   running: boolean;
+  /** Accessible name for the canvas — the demo passes a localized one. */
+  label: string;
 };
 
 const SIZE = 560;
@@ -44,7 +46,16 @@ function lerp(from: number, to: number, t: number) {
  * up, so screen coordinates flip y once here and everything else stays in the
  * same frame the physics uses.
  */
-export function CarBoard({ state, from, track, candidates, played, waitedMs, running }: Props) {
+export function CarBoard({
+  state,
+  from,
+  track,
+  candidates,
+  played,
+  waitedMs,
+  running,
+  label,
+}: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const previousRef = useRef<{ state: CarState; from: CarState } | null>(null);
 
@@ -222,7 +233,8 @@ export function CarBoard({ state, from, track, candidates, played, waitedMs, run
       height={SIZE}
       style={{ width: "100%", maxWidth: SIZE, aspectRatio: "1 / 1" }}
       className="rounded-lg"
-      aria-label="car track"
+      role="img"
+      aria-label={label}
       data-testid="car-board"
     />
   );

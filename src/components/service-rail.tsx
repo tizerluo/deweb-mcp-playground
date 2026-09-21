@@ -22,7 +22,7 @@ export function ServiceRail({ active }: { active?: string }) {
       >
         <div className="flex items-center justify-between gap-2">
           <span className="font-mono text-xs text-accent">webmcp</span>
-          <Badge variant="live">Agent</Badge>
+          <Badge variant="live">{t("mcp.agentBadge")}</Badge>
         </div>
         <div className="mt-2 text-sm font-medium text-fg">{t("mcp.railTitle")}</div>
         <div className="mt-1 hidden text-xs leading-snug text-muted md:block">
@@ -51,7 +51,7 @@ export function ServiceRail({ active }: { active?: string }) {
               {t(`svc.${s.slug}.headline`)}
             </div>
             <div className="mt-2 font-mono text-[10px] tabular-nums text-subtle">
-              {formatBem(balances[s.endpoint] ?? 0, 2)} BEM
+              {t("svc.balance", { n: formatBem(balances[s.endpoint] ?? 0, 2) })}
             </div>
           </Link>
         );

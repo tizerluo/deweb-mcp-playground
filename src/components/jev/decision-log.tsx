@@ -1,6 +1,9 @@
 import { Badge } from "@/components/ui/badge";
 import { useT } from "@/lib/i18n";
-import type { DecisionView } from "@/lib/jev/decision";
+import { STATUS_KEY, type DecisionView } from "@/lib/jev/decision";
+import { messageRowKind, notSentReasonKey } from "@/lib/jev/rows";
+import type { RoundStats } from "@/lib/jev/stats";
+import { averageLatencyMs } from "@/lib/jev/stats";
 import { cn, formatBem, shortHex } from "@/lib/utils";
 
 /**
@@ -40,9 +43,6 @@ export type DecisionRow = {
    * so a row written before a language switch still renders in the new one.
    */
   labels?: {
-    /** Prefix for the status badge; defaults to "jev.state". A decision that
-     *  carries its own `statusKey` (see `@/lib/jev/decision`) overrides it. */
-    statusKeyPrefix?: string;
     /** Key for the fallback option list line; defaults to "jev.options". */
     optionsKey?: string;
     /** Key for the late-reply note; defaults to "jev.messages.late". */
@@ -61,8 +61,11 @@ const STATUS_VARIANT: Record<
   degraded: "danger",
 };
 
-export function DecisionStream({ rows }: { rows: DecisionRow[] }) {
+export function DecisionStream({ rows, total }: { rows: DecisionRow[]; total?: number }) {
   const t = useT();
+  // The list is a ring buffer; the round is not. Counting the list would let
+  // the header claim 120 ticks after the three-hundredth one.
+  const ticks = total ?? rows.length;
   return (
     <div
       className="rounded-xl bg-surface p-4 shadow-[var(--shadow-border)]"
@@ -71,7 +74,8 @@ export function DecisionStream({ rows }: { rows: DecisionRow[] }) {
       <div className="flex items-center justify-between gap-2">
         <h3 className="text-sm font-medium">{t("jev.stream.title")}</h3>
         <span className="font-mono text-[10px] text-subtle">
-          {t("jev.stream.count", { n: rows.length })}
+          {t("jev.stream.count", { n: ticks })}
+          {ticks > rows.length ? ` · ${t("jev.stream.shown", { shown: rows.length })}` : ""}
         </span>
       </div>
       {rows.length === 0 ? (
@@ -89,10 +93,7 @@ export function DecisionStream({ rows }: { rows: DecisionRow[] }) {
                     {row.decision.source === "jev" ? "JEV" : t("jev.source.local")}
                   </Badge>
                   <Badge variant={STATUS_VARIANT[row.decision.status]}>
-                    {t(
-                      row.decision.statusKey ??
-                        `${row.labels?.statusKeyPrefix ?? "jev.state"}.${row.decision.status}`,
-                    )}
+                    {t(row.decision.statusKey ?? STATUS_KEY[row.decision.status])}
                   </Badge>
                   <span className="font-mono text-xs text-fg">→ {row.decision.pick ?? "—"}</span>
                 </div>
@@ -140,10 +141,23 @@ export function DecisionStream({ rows }: { rows: DecisionRow[] }) {
               )}
 
               {row.decision.reason ? (
-                <p className="mt-1 text-[10px] text-danger">
-                  {t("jev.degraded", { reason: t(`jev.err.${row.decision.reason}`) })}
-                  {row.message ? ` · ${row.message}` : ""}
-                </p>
+                <>
+                  <p className="mt-1 text-[10px] text-danger">
+                    {t("jev.degraded", { reason: t(`jev.err.${row.decision.reason}`) })}
+                  </p>
+                  {/* Upstream prose is developer material, not the headline:
+                      it goes behind a fold instead of into the row. */}
+                  {row.message ? (
+                    <details className="mt-1">
+                      <summary className="cursor-pointer font-mono text-[10px] text-subtle">
+                        {t("jev.detail")}
+                      </summary>
+                      <p className="mt-1 break-all font-mono text-[10px] text-subtle">
+                        {row.message}
+                      </p>
+                    </details>
+                  ) : null}
+                </>
               ) : null}
               {row.decision.status === "illegal" ? (
                 <p className="mt-1 font-mono text-[10px] text-danger">
@@ -178,21 +192,31 @@ export function MessageStrip({ rows }: { rows: DecisionRow[] }) {
         <p className="mt-3 text-xs leading-relaxed text-muted">{t("jev.messages.empty")}</p>
       ) : (
         <ul className="mt-3 max-h-72 space-y-2 overflow-auto pr-1">
-          {rows.map((row) =>
-            !row.requested ? (
-              <li key={row.id} className="rounded-lg px-3 py-2 shadow-[var(--shadow-border)]">
-                <p className="font-mono text-[10px] text-subtle">
-                  #{row.tick} · {t("jev.messages.none")}
-                </p>
-              </li>
-            ) : row.envelope.requestId === "" ? (
-              <li key={row.id} className="rounded-lg px-3 py-2 shadow-[var(--shadow-border)]">
-                <p className="font-mono text-[10px] text-subtle">
-                  #{row.tick} · {row.envelope.from} → {row.envelope.to || "…"} ·{" "}
-                  {t("jev.messages.noReply")} · {t("jev.messages.refunded")}
-                </p>
-              </li>
-            ) : (
+          {rows.map((row) => {
+            // Three states, three sentences. "No request id" means no letter
+            // went out at all — the wallet may never have been charged, so it
+            // must not be told the money was held and refunded.
+            const kind = messageRowKind(row);
+            if (kind === "forced") {
+              return (
+                <li key={row.id} className="rounded-lg px-3 py-2 shadow-[var(--shadow-border)]">
+                  <p className="font-mono text-[10px] text-subtle">
+                    #{row.tick} · {t("jev.messages.none")}
+                  </p>
+                </li>
+              );
+            }
+            if (kind === "not-sent") {
+              return (
+                <li key={row.id} className="rounded-lg px-3 py-2 shadow-[var(--shadow-border)]">
+                  <p className="font-mono text-[10px] text-subtle">
+                    #{row.tick} · {row.envelope.from} → {row.envelope.to || "…"} ·{" "}
+                    {t("jev.messages.notSent", { reason: t(notSentReasonKey(row)) })}
+                  </p>
+                </li>
+              );
+            }
+            return (
               <li
                 key={row.id}
                 className="rounded-lg bg-raised px-3 py-2 shadow-[var(--shadow-border)]"
@@ -224,31 +248,41 @@ export function MessageStrip({ rows }: { rows: DecisionRow[] }) {
                   </p>
                 ) : null}
               </li>
-            ),
-          )}
+            );
+          })}
         </ul>
       )}
     </div>
   );
 }
 
-export function DecisionRowStats({ rows }: { rows: DecisionRow[] }) {
+/**
+ * The round's totals. They come from the counters the loops keep, not from the
+ * rows they render: the row list is capped, and an average or a spend computed
+ * from a capped list drifts away from the truth as the round runs.
+ */
+export function DecisionRowStats({ stats }: { stats: RoundStats }) {
   const t = useT();
-  const answered = rows.filter((row) => row.decision.source === "jev").length;
-  const spent = rows.reduce((sum, row) => sum + row.charge, 0);
-  const latencies = rows
-    .map((row) => row.decision.latencyMs)
-    .filter((value): value is number => typeof value === "number");
-  const avg = latencies.length
-    ? Math.round(latencies.reduce((sum, value) => sum + value, 0) / latencies.length)
-    : null;
+  const avg = averageLatencyMs(stats);
+  const breakdown = t("jev.stats.breakdown", {
+    timeout: stats.byStatus.timeout,
+    degraded: stats.byStatus.degraded,
+    illegal: stats.byStatus.illegal,
+    forced: stats.byStatus.forced,
+  });
   return (
-    <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4" data-testid="jev-stats">
-      <Stat label={t("jev.stats.decisions")} value={String(rows.length)} />
-      <Stat label={t("jev.stats.jev")} value={`${answered}/${rows.length || 0}`} />
-      <Stat label={t("jev.stats.avg")} value={avg === null ? "—" : `${avg} ms`} />
-      <Stat label={t("jev.stats.spent")} value={`${formatBem(spent, 3)} BEM`} />
-    </dl>
+    <div className="@container" data-testid="jev-stats">
+      <dl className="grid grid-cols-2 gap-2 @[420px]:grid-cols-3 @[640px]:grid-cols-5">
+        <Stat label={t("jev.stats.decisions")} value={String(stats.ticks)} />
+        <Stat label={t("jev.stats.jev")} value={String(stats.replied)} />
+        <Stat label={t("jev.stats.adopted")} value={String(stats.adopted)} />
+        <Stat label={t("jev.stats.avg")} value={avg === null ? "—" : `${avg} ms`} />
+        <Stat label={t("jev.stats.spent")} value={`${formatBem(stats.spent, 3)} BEM`} />
+      </dl>
+      <p className="mt-2 font-mono text-[10px] text-subtle" data-testid="jev-stats-breakdown">
+        {breakdown}
+      </p>
+    </div>
   );
 }
 

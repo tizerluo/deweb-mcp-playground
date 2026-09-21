@@ -16,6 +16,7 @@ import { carProbabilityRows } from "@/lib/jev/car/question";
 import { createTrack } from "@/lib/jev/car/track";
 import { carDecisionView, carStatusKey } from "@/lib/jev/car/view";
 import type { JevRound } from "@/lib/jev/decision";
+import { EMPTY_STATS, recordDecision, recordLateReply, type RoundStats } from "@/lib/jev/stats";
 import { useTape } from "@/lib/tape/store";
 import { cn, formatBem } from "@/lib/utils";
 
@@ -51,6 +52,9 @@ export function CarDemo() {
   const [periodMs, setPeriodMs] = useState<number>(DEFAULT_PERIOD_MS);
   const [effectiveMs, setEffectiveMs] = useState<number>(DEFAULT_PERIOD_MS);
   const [rows, setRows] = useState<DecisionRow[]>([]);
+  // The run's totals, counted as each window settles — the row list is capped
+  // at MAX_ROWS, so a spend or an average read off it would drift.
+  const [stats, setStats] = useState<RoundStats>(EMPTY_STATS);
   const [latest, setLatest] = useState<CarTick | null>(null);
 
   const carRef = useRef<CarState>(car);
@@ -84,7 +88,6 @@ export function CarDemo() {
       // The shared stream's defaults are the snake's words; a car window that
       // got no answer held its last action, and its options are actions.
       labels: {
-        statusKeyPrefix: "jev.car.state",
         optionsKey: "jev.car.options",
         lateKey: "jev.car.messages.late",
       },
@@ -102,6 +105,14 @@ export function CarDemo() {
       message: tick.round?.message ?? "",
     };
     setRows((prev) => [row, ...prev].slice(0, MAX_ROWS));
+    setStats((prev) =>
+      recordDecision(prev, {
+        status: view.status,
+        source: view.source,
+        charge: tick.round?.charge ?? 0,
+        latencyMs: view.latencyMs,
+      }),
+    );
     setPrevious(tick.from);
     carRef.current = tick.state;
     setCar(tick.state);
@@ -111,6 +122,7 @@ export function CarDemo() {
 
   /** A round that resolved after its window: patch the row it missed. */
   const patchTick = useCallback((rowId: string, round: JevRound) => {
+    setStats((prev) => recordLateReply(prev, { ok: round.ok, charge: round.charge }));
     setRows((prev) =>
       prev.some((entry) => entry.id === rowId)
         ? prev.map((entry) =>
@@ -142,6 +154,7 @@ export function CarDemo() {
           setPrevious(fresh);
           setLatest(null);
           setRows([]);
+          setStats(EMPTY_STATS);
           return fresh;
         },
         getPeriodMs: () => periodRef.current,
@@ -173,7 +186,7 @@ export function CarDemo() {
     .slice(0, 3);
 
   return (
-    <div className="grid gap-4" data-testid="jev-car-demo">
+    <div className="@container grid gap-4" data-testid="jev-car-demo">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h3 className="text-sm font-medium">{t("jev.car.title")}</h3>
@@ -191,8 +204,18 @@ export function CarDemo() {
         </Badge>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,560px)_minmax(0,1fr)]">
-        <div className="grid content-start gap-3">
+      {/*
+        Two columns only when the demo itself is wide enough for both. The page
+        column is ~616px on a wide desktop, so a viewport-based `lg:` split gave
+        the 560px canvas + a 40px (or 0px) gutter for the statistics, decision
+        stream and message strip — they overflowed the grid by ~130px and
+        truncated their labels. The split now follows the demo's own width (the
+        616px column becomes a 360px canvas beside a 240px information column,
+        the geometry the snake demo already proves readable); a narrower column
+        stacks instead of squeezing.
+      */}
+      <div className="grid gap-4 @[600px]:grid-cols-[minmax(0,1fr)_minmax(240px,260px)]">
+        <div className="grid min-w-0 content-start gap-3">
           <CarBoard
             state={car}
             from={previous}
@@ -201,6 +224,7 @@ export function CarDemo() {
             played={prediction}
             waitedMs={effectiveMs}
             running={running}
+            label={t("jev.car.boardLabel")}
           />
 
           <div className="flex flex-wrap items-center gap-2">
@@ -226,6 +250,7 @@ export function CarDemo() {
                   key={choice}
                   size="sm"
                   variant={choice === periodMs ? "secondary" : "ghost"}
+                  aria-pressed={choice === periodMs}
                   onClick={() => setPeriodMs(choice)}
                 >
                   <span className="font-mono text-[11px]">{choice} ms</span>
@@ -354,9 +379,9 @@ export function CarDemo() {
           ) : null}
         </div>
 
-        <div className="grid content-start gap-4">
-          <DecisionRowStats rows={rows} />
-          <DecisionStream rows={rows} />
+        <div className="grid min-w-0 content-start gap-4">
+          <DecisionRowStats stats={stats} />
+          <DecisionStream rows={rows} total={stats.ticks} />
           <MessageStrip rows={rows} />
           <p className="text-[10px] leading-relaxed text-subtle">{t("jev.car.note")}</p>
         </div>

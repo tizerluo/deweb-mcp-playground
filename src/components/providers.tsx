@@ -22,6 +22,17 @@ function Ticker() {
   return null;
 }
 
+function PersistedState() {
+  const hydratePersisted = useTape((s) => s.hydratePersisted);
+  useEffect(() => {
+    // After hydration, never during the first render: the server has no
+    // localStorage, so a balance/board read before React finishes hydrating
+    // paints different text than the markup it is hydrating (#418).
+    hydratePersisted();
+  }, [hydratePersisted]);
+  return null;
+}
+
 function TapeKitBridge() {
   const call = useTape((s) => s.call);
   useEffect(() => {
@@ -49,6 +60,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
   return (
     <QueryClientProvider client={client}>
       <Ticker />
+      <PersistedState />
       <LangSync />
       <TapeKitBridge />
       {children}

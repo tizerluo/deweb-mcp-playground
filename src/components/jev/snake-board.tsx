@@ -5,6 +5,8 @@ type Props = {
   game: GameState;
   tickMs: number;
   running: boolean;
+  /** Accessible name for the canvas — the demo passes a localized one. */
+  label: string;
 };
 
 const CELL = 32;
@@ -25,7 +27,7 @@ function lerp(from: number, to: number, t: number) {
  * its previous cells and its new ones over the tick duration, so the move the
  * model chose is visible as motion rather than a jump.
  */
-export function SnakeBoard({ game, tickMs, running }: Props) {
+export function SnakeBoard({ game, tickMs, running, label }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const previousRef = useRef<GameState | null>(null);
 
@@ -140,7 +142,8 @@ export function SnakeBoard({ game, tickMs, running }: Props) {
       height={size}
       style={{ width: "100%", maxWidth: size, aspectRatio: "1 / 1" }}
       className="rounded-lg"
-      aria-label="snake board"
+      role="img"
+      aria-label={label}
     />
   );
 }

@@ -1,5 +1,11 @@
 import { useEffect } from "react";
-import { MCP_TOOLS, isFileVia, type McpToolDef } from "@/lib/tape/mcp-manifest";
+import {
+  MCP_TOOLS,
+  isFileVia,
+  toolEndpoint,
+  toolPriceBem,
+  type McpToolDef,
+} from "@/lib/tape/mcp-manifest";
 import { t } from "@/lib/i18n";
 import { useMcpUi } from "@/lib/tape/mcp-ui";
 import { useTape } from "@/lib/tape/store";
@@ -60,7 +66,10 @@ export function WebMcpHost() {
       execute: async (input) => {
         if (!window.tape) throw new Error(t("err.fail"));
         if (!isFileVia(def.via)) {
-          const ok = await askConsent(def.name, 0);
+          // The confirmation names the real price and the container the letter
+          // goes to: it used to ask with a hardcoded 0 while the call settled
+          // 0.01 BEM, which the reader only discovered on their balance.
+          const ok = await askConsent(def.name, toolPriceBem(def.via), toolEndpoint(def.via));
           if (!ok) throw new Error(t("mcp.declined"));
         }
         const params = bindParams(def, input);

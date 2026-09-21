@@ -17,6 +17,19 @@ import type { JevDecisionReason } from "./protocol.ts";
  */
 export type DecisionStatus = "answered" | "forced" | "timeout" | "illegal" | "degraded";
 
+/**
+ * The status badge key per decision status, written out rather than built from
+ * `"jev.state" + "." + status`: literal keys are what the language-parity test
+ * can check, and there is one less string to keep in step with the tables.
+ */
+export const STATUS_KEY: Record<DecisionStatus, string> = {
+  answered: "jev.state.answered",
+  forced: "jev.state.forced",
+  timeout: "jev.state.timeout",
+  illegal: "jev.state.illegal",
+  degraded: "jev.state.degraded",
+};
+
 /** What the caller got back from JEV (or not) before its decision point. */
 export type JevOutcome =
   | {

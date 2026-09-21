@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { Link, createFileRoute, notFound } from "@tanstack/react-router";
 import { AppShell } from "@/components/app-shell";
 import { CallWorkspace } from "@/components/call-workspace";
 import { Button } from "@/components/ui/button";
@@ -7,8 +7,36 @@ import { useTape } from "@/lib/tape/store";
 import { serviceBySlug } from "@/lib/tape/catalog";
 
 export const Route = createFileRoute("/s/$slug")({
+  /**
+   * A slug that names no service is not a page that happens to be empty: it is
+   * a 404, decided before the card renders. It used to answer a soft 200 with
+   * "no such service" written inside a normal card.
+   */
+  loader: ({ params }) => {
+    if (!serviceBySlug(params.slug)) throw notFound();
+    return null;
+  },
+  notFoundComponent: MissingService,
   component: ServicePage,
 });
+
+function MissingService() {
+  const t = useT();
+  return (
+    <AppShell slug="">
+      <div className="rounded-xl bg-surface p-6 text-center shadow-[var(--shadow-border)]">
+        <h1 className="text-base font-medium">{t("notFound.title")}</h1>
+        <p className="mt-2 text-sm text-muted">{t("notFound.body")}</p>
+        <Link
+          to="/"
+          className="mt-4 inline-block rounded-md px-3 py-2 text-sm text-accent underline underline-offset-4"
+        >
+          {t("notFound.back")}
+        </Link>
+      </div>
+    </AppShell>
+  );
+}
 
 function ServicePage() {
   const { slug } = Route.useParams();

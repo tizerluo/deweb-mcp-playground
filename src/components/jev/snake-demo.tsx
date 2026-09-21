@@ -15,6 +15,7 @@ import { useT } from "@/lib/i18n";
 import { createSnakeRunner, type SnakeRound, type SnakeTick } from "@/lib/jev/snake/loop";
 import type { SnakeDecision } from "@/lib/jev/snake/controller";
 import type { DecisionView } from "@/lib/jev/decision";
+import { EMPTY_STATS, recordDecision, recordLateReply, type RoundStats } from "@/lib/jev/stats";
 import { createGame, type GameState } from "@/lib/jev/snake/engine";
 import { probabilityRows } from "@/lib/jev/snake/question";
 import { useTape } from "@/lib/tape/store";
@@ -63,6 +64,9 @@ export function SnakeDemo() {
   const [tickMs, setTickMs] = useState<number>(DEFAULT_TICK_MS);
   const [effectiveMs, setEffectiveMs] = useState<number>(DEFAULT_TICK_MS);
   const [rows, setRows] = useState<DecisionRow[]>([]);
+  // The round's totals, counted as each tick settles — the row list is capped
+  // at MAX_ROWS, so anything derived from it stops describing the round.
+  const [stats, setStats] = useState<RoundStats>(EMPTY_STATS);
   const [name, setName] = useState("arcade");
 
   const speedRef = useRef<number>(DEFAULT_TICK_MS);
@@ -107,6 +111,14 @@ export function SnakeDemo() {
       message: tick.round?.message ?? "",
     };
     setRows((prev) => [row, ...prev].slice(0, MAX_ROWS));
+    setStats((prev) =>
+      recordDecision(prev, {
+        status: tick.decision.status,
+        source: tick.decision.source,
+        charge: tick.round?.charge ?? 0,
+        latencyMs: tick.decision.latencyMs,
+      }),
+    );
     gameRef.current = tick.game;
     setGame(tick.game);
     return rowId;
@@ -114,6 +126,7 @@ export function SnakeDemo() {
 
   /** A round that resolved after its tick: patch the row it missed, if it is still there. */
   const patchTick = useCallback((rowId: string, round: SnakeRound) => {
+    setStats((prev) => recordLateReply(prev, { ok: round.ok, charge: round.charge }));
     setRows((prev) =>
       prev.some((entry) => entry.id === rowId)
         ? prev.map((entry) =>
@@ -144,6 +157,7 @@ export function SnakeDemo() {
           gameRef.current = fresh;
           setGame(fresh);
           setRows([]);
+          setStats(EMPTY_STATS);
           return fresh;
         },
         getSpeedMs: () => speedRef.current,
@@ -184,7 +198,12 @@ export function SnakeDemo() {
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,360px)_minmax(0,1fr)]">
         <div className="grid content-start gap-3">
-          <SnakeBoard game={game} tickMs={effectiveMs} running={running} />
+          <SnakeBoard
+            game={game}
+            tickMs={effectiveMs}
+            running={running}
+            label={t("jev.snake.boardLabel")}
+          />
 
           <div className="flex flex-wrap items-center gap-2">
             {running ? (
@@ -213,6 +232,7 @@ export function SnakeDemo() {
                   key={choice}
                   size="sm"
                   variant={choice === tickMs ? "secondary" : "ghost"}
+                  aria-pressed={choice === tickMs}
                   onClick={() => setTickMs(choice)}
                 >
                   <span className="font-mono text-[11px]">{choice} ms</span>
@@ -274,8 +294,8 @@ export function SnakeDemo() {
         </div>
 
         <div className="grid content-start gap-4">
-          <DecisionRowStats rows={rows} />
-          <DecisionStream rows={rows} />
+          <DecisionRowStats stats={stats} />
+          <DecisionStream rows={rows} total={stats.ticks} />
           <MessageStrip rows={rows} />
           <p className="text-[10px] leading-relaxed text-subtle">{t("jev.note")}</p>
         </div>

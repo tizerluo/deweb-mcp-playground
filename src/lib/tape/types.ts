@@ -2,19 +2,21 @@ export type CallMode = "A" | "B" | "C";
 
 export type ServiceMethod = {
   name: string;
-  summary: string;
   priceBem: number;
   timeoutBlocks: number;
 };
 
+/**
+ * A service as the playground needs it: the structured protocol facts only.
+ * Every user-facing sentence lives in the i18n tables (`svc.<slug>.*`), because
+ * two copies of the same copy drift — the catalog still said `price.json` while
+ * the UI said `/data/price.json`, and one stale string is enough to contradict
+ * the page it is read on.
+ */
 export type ServiceDef = {
   slug: string;
   vanity: string;
-  name: string;
-  headline: string;
-  blurb: string;
   mode: CallMode;
-  modeLabel: string;
   endpoint: string;
   cpu: number;
   tokenId: number;
@@ -38,7 +40,14 @@ export type TraceKind =
 export type TraceEvent = {
   id: string;
   kind: TraceKind;
-  title: string;
+  /**
+   * i18n key, translated when the trace is *rendered* rather than when the
+   * event happens: a trace written before a language switch must not stay in
+   * the old language.
+   */
+  code: string;
+  vars?: Record<string, string | number>;
+  /** Raw or language-neutral detail (endpoints, digests, ids). */
   detail?: string;
   block: number;
   json?: unknown;

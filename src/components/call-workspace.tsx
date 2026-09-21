@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { useT } from "@/lib/i18n";
 import { SERVICES, serviceBySlug } from "@/lib/tape/catalog";
 import { useTape } from "@/lib/tape/store";
-import { formatBem, formatUsd } from "@/lib/utils";
+import { cn, formatBem, formatUsd } from "@/lib/utils";
 import type { ServiceDef } from "@/lib/tape/types";
 
 export function CallWorkspace({ slug }: { slug: string }) {
@@ -59,22 +59,35 @@ function PricePanel({ svc }: { svc: ServiceDef }) {
     if (!price) void refreshPrice();
   }, [price, refreshPrice]);
 
-  const change = price && price.ok ? price.change24h : 0;
+  // A failed quote is an error state, not a flat market: it must not borrow the
+  // success colour (`change` is 0 when there is no quote), and its words must
+  // come from the current language rather than from the server.
+  const priceError = price && !price.ok ? price : null;
+  const errorText = priceError
+    ? priceError.reason === "http"
+      ? t("price.err.http", { code: priceError.status ?? 0 })
+      : t(`price.err.${priceError.reason}`)
+    : null;
+  const change = price?.ok ? price.change24h : 0;
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_280px]">
       <div>
         <p className="text-xs font-medium text-muted">{t("price.label")}</p>
         <p className="mt-1 font-mono text-4xl tabular-nums tracking-tight whitespace-nowrap sm:text-5xl">
-          {price?.ok ? formatUsd(price.usd) : price && !price.ok ? "—" : t("price.reading")}
+          {price?.ok ? formatUsd(price.usd) : priceError ? "—" : t("price.reading")}
         </p>
         <p
-          className={`mt-2 font-mono text-sm tabular-nums ${change >= 0 ? "text-ok" : "text-danger"}`}
+          className={cn(
+            "mt-2 font-mono text-sm tabular-nums",
+            priceError ? "text-danger" : change >= 0 ? "text-ok" : "text-danger",
+          )}
+          data-testid="price-error"
         >
           {price?.ok
             ? `${change >= 0 ? "+" : ""}${change.toFixed(2)}% 24h`
-            : price && !price.ok
-              ? price.error
+            : errorText
+              ? errorText
               : ""}
         </p>
         <div className="mt-6 flex flex-wrap gap-2">
@@ -105,7 +118,12 @@ function PricePanel({ svc }: { svc: ServiceDef }) {
                 fdv: Math.round(price.fdv),
                 source: price.source,
               }
-            : { path: "/data/price.json", status: "empty" },
+            : {
+                path: "/data/price.json",
+                status: "unavailable",
+                reason: priceError?.reason ?? "loading",
+                http: priceError?.status,
+              },
           null,
           2,
         )}
@@ -164,7 +182,10 @@ function GamePanel({ svc }: { svc: ServiceDef }) {
               id="gs"
               type="number"
               value={score}
-              onChange={(e) => setScore(Number(e.target.value))}
+              onChange={(e) => {
+                const next = Number(e.target.value);
+                setScore(Number.isFinite(next) ? next : 0);
+              }}
             />
             <Button type="button" variant="secondary" onClick={() => setScore((n) => n + 13)}>
               +13
@@ -223,11 +244,13 @@ function PayPanel({ svc }: { svc: ServiceDef }) {
   const others = useMemo(() => SERVICES.filter((s) => s.slug !== "payment"), []);
   const [to, setTo] = useState(others[0]?.endpoint ?? "");
   const [amount, setAmount] = useState(0.5);
-  const [memo, setMemo] = useState(t("pay.memoDefault"));
+  // Null until the reader edits it: an untouched default must follow the
+  // language (a value frozen at mount left a Chinese memo on an English form),
+  // and only an edit is worth refusing to translate.
+  const [memo, setMemo] = useState<string | null>(null);
+  const memoValue = memo ?? t("pay.memoDefault");
   const busy = useTape((s) => s.busy);
   const call = useTape((s) => s.call);
-  const faucet = useTape((s) => s.faucet);
-  const bem = useTape((s) => s.bem);
   const fee = svc.methods[0].priceBem;
 
   return (
@@ -260,7 +283,12 @@ function PayPanel({ svc }: { svc: ServiceDef }) {
       </div>
       <div className="grid gap-2">
         <Label htmlFor="memo">{t("pay.memo")}</Label>
-        <Input id="memo" value={memo} maxLength={80} onChange={(e) => setMemo(e.target.value)} />
+        <Input
+          id="memo"
+          value={memoValue}
+          maxLength={80}
+          onChange={(e) => setMemo(e.target.value)}
+        />
       </div>
       <div className="flex flex-wrap gap-2">
         <Button
@@ -269,7 +297,7 @@ function PayPanel({ svc }: { svc: ServiceDef }) {
             const r = await call({
               slug: svc.slug,
               method: "pay",
-              params: { to, amount, memo },
+              params: { to, amount, memo: memoValue },
             });
             if (!r.ok) toast.error(r.error);
             else toast.success(t("pay.ok"));
@@ -277,11 +305,6 @@ function PayPanel({ svc }: { svc: ServiceDef }) {
         >
           {t("pay.send", { n: formatBem(fee, 3) })}
         </Button>
-        {bem < 0.2 ? (
-          <Button variant="secondary" onClick={faucet}>
-            {t("pay.faucet")}
-          </Button>
-        ) : null}
       </div>
     </div>
   );

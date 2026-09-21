@@ -1,31 +1,90 @@
+import { createContext, useContext } from "react";
 import { create } from "zustand";
 
 export type Locale = "zh" | "en" | "ja" | "ko";
 
-export const LOCALES: { id: Locale; native: string; html: string }[] = [
-  { id: "zh", native: "中", html: "zh-CN" },
-  { id: "en", native: "EN", html: "en" },
-  { id: "ja", native: "日", html: "ja" },
-  { id: "ko", native: "한", html: "ko" },
+export const LOCALES: { id: Locale; native: string; label: string; html: string }[] = [
+  { id: "zh", native: "中", label: "中文", html: "zh-CN" },
+  { id: "en", native: "EN", label: "English", html: "en" },
+  { id: "ja", native: "日", label: "日本語", html: "ja" },
+  { id: "ko", native: "한", label: "한국어", html: "ko" },
 ];
 
-const STORAGE = "deweb-mcp-locale";
+export const DEFAULT_LOCALE: Locale = "en";
 
-function detect(): Locale {
-  if (typeof window === "undefined") return "en";
+/**
+ * The locale lives in a cookie, not only in localStorage: the server has no
+ * localStorage, so a request that carried only a stored locale came back as
+ * English and the client re-rendered it in another language (React hydration
+ * error #418, plus a flash of English). `setLocale` writes this cookie, the
+ * server reads it, and the root route echoes its answer into
+ * `<html data-locale>` for the first client render.
+ */
+export const LOCALE_COOKIE = "deweb-mcp-locale";
+const STORAGE = "deweb-mcp-locale";
+const COOKIE_MAX_AGE_S = 60 * 60 * 24 * 365;
+
+export function parseLocale(value: string | null | undefined): Locale | null {
+  if (value === "zh" || value === "en" || value === "ja" || value === "ko") return value;
+  return null;
+}
+
+/** Best supported locale named in an `Accept-Language` header, or null. */
+export function matchAcceptLanguage(header: string | null | undefined): Locale | null {
+  if (!header) return null;
+  const ranked = header
+    .split(",")
+    .map((part) => {
+      const [tag, ...params] = part.trim().split(";");
+      let q = 1;
+      for (const param of params) {
+        const [key, raw] = param.trim().split("=");
+        if (key === "q" && raw) {
+          const parsed = Number(raw);
+          if (Number.isFinite(parsed)) q = parsed;
+        }
+      }
+      return { tag: (tag ?? "").trim().toLowerCase(), q };
+    })
+    .filter((entry) => entry.tag && entry.q > 0)
+    .sort((a, b) => b.q - a.q);
+  for (const { tag } of ranked) {
+    if (tag.startsWith("zh")) return "zh";
+    if (tag.startsWith("ja")) return "ja";
+    if (tag.startsWith("ko")) return "ko";
+    if (tag.startsWith("en")) return "en";
+  }
+  return null;
+}
+
+function readCookie(name: string): string | null {
   try {
-    const saved = localStorage.getItem(STORAGE);
-    if (saved === "zh" || saved === "en" || saved === "ja" || saved === "ko") {
-      return saved;
-    }
+    const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
+    return match?.[1] ? decodeURIComponent(match[1]) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The locale for the first render. `data-locale` on `<html>` is the server's
+ * own answer for this request, so the first client render matches the markup
+ * the server painted; localStorage and the browser language are only a
+ * fallback for a document the server did not render (no cookie, no hint).
+ */
+function detect(): Locale {
+  if (typeof window === "undefined") return DEFAULT_LOCALE;
+  const echoed = parseLocale(document.documentElement.dataset.locale);
+  if (echoed) return echoed;
+  const fromCookie = parseLocale(readCookie(STORAGE));
+  if (fromCookie) return fromCookie;
+  try {
+    const saved = parseLocale(localStorage.getItem(STORAGE));
+    if (saved) return saved;
   } catch {
     /* ignore */
   }
-  const n = (navigator.language || "en").toLowerCase();
-  if (n.startsWith("zh")) return "zh";
-  if (n.startsWith("ja")) return "ja";
-  if (n.startsWith("ko")) return "ko";
-  return "en";
+  return matchAcceptLanguage(navigator.language) ?? DEFAULT_LOCALE;
 }
 
 type I18nState = {
@@ -43,11 +102,32 @@ export const useI18n = create<I18nState>((set) => ({
     }
     if (typeof document !== "undefined") {
       const html = LOCALES.find((l) => l.id === locale)?.html ?? "en";
+      document.cookie = `${STORAGE}=${locale}; path=/; max-age=${COOKIE_MAX_AGE_S}; samesite=lax`;
       document.documentElement.lang = html;
+      document.documentElement.dataset.locale = locale;
     }
     set({ locale });
   },
 }));
+
+/**
+ * The locale the tree renders in. The root route knows the request's locale
+ * (server: cookie/Accept-Language; client hydration: the same value echoed
+ * into the document) and provides it here; everywhere else the store is the
+ * source of truth.
+ */
+export const LocaleContext = createContext<Locale | null>(null);
+
+export function useLocale(): Locale {
+  const fromProvider = useContext(LocaleContext);
+  const fromStore = useI18n((s) => s.locale);
+  // Server: the provider holds this request's locale and nothing else may be
+  // used — a module-level store would leak one request's language into a
+  // concurrent one. Client: the store starts on the same value (the `data-locale`
+  // the server echoed) and then follows the user's switches.
+  if (typeof window === "undefined") return fromProvider ?? fromStore;
+  return fromStore;
+}
 
 export function t(key: string, vars?: Record<string, string | number>, locale?: Locale) {
   const loc = locale ?? useI18n.getState().locale;
@@ -62,7 +142,7 @@ export function t(key: string, vars?: Record<string, string | number>, locale?: 
 }
 
 export function useT() {
-  const locale = useI18n((s) => s.locale);
+  const locale = useLocale();
   return (key: string, vars?: Record<string, string | number>) => t(key, vars, locale);
 }
 
@@ -70,15 +150,17 @@ export function htmlLang(locale: Locale) {
   return LOCALES.find((l) => l.id === locale)?.html ?? "en";
 }
 
-const MESSAGES: Record<Locale, Record<string, string>> = {
+export const MESSAGES: Record<Locale, Record<string, string>> = {
   zh: {
     brand: "DeWEB MCP",
     badge: "草案",
     tagline: "站点登记工具，容器互相当接口",
+    "meta.description":
+      "DeWEB MCP · 非官方草案：TAP-10 请求/响应加 WebMCP 工具，把链上站点变成可调用的工具。",
     "nav.webmcp": "WebMCP",
     "nav.spec": "规范",
-    "nav.home": "目录",
     "status.idle": "空闲",
+    "locale.group": "界面语言",
     "status.busy": "进行中",
     locked: "锁 {n}",
     "home.kicker": "DeWEB · TapeSend · WebMCP",
@@ -94,6 +176,7 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "mode.A": "只读",
     "mode.B": "链上记",
     "mode.C": "接单",
+    "svc.balance": "容器余额 {n} BEM",
     "svc.price.name": "行情",
     "svc.price.headline": "把报价写成链上文件",
     "svc.price.blurb":
@@ -106,6 +189,7 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "jev.method": "方法 {name} · 每次 {n} BEM",
     "jev.stream.title": "决策流",
     "jev.stream.count": "{n} 步",
+    "jev.stream.shown": "显示最近 {shown} 条",
     "jev.stream.empty": "开始一局。每一步都会先算事实，再问 JEV 选哪一个。",
     "jev.source.local": "本地",
     "jev.state.answered": "JEV 已答",
@@ -115,10 +199,12 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "jev.state.degraded": "降级",
     "jev.options": "合法方向 {list}",
     "jev.degraded": "降级：本地策略（非 JEV）· {reason}",
+    "jev.detail": "开发者详情",
     "jev.illegal": "JEV 回了「{pick}」，不在合法方向里，按直行处理",
     "jev.messages.title": "消息条",
     "jev.messages.empty": "还没有 TAP-10 消息。每次决策寄出一封请求信，收回一封回信。",
     "jev.messages.none": "规则强制走法，未发信",
+    "jev.messages.notSent": "未发送 · {reason}",
     "jev.messages.noReply": "回信未到",
     "jev.messages.paid": "信封 {n} BEM",
     "jev.messages.charged": "已结算 {n} BEM",
@@ -126,15 +212,19 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "jev.messages.late": "回信迟到：这一步已按直行处理",
     "jev.stats.decisions": "步数",
     "jev.stats.jev": "JEV 作答",
+    "jev.stats.adopted": "采用 JEV",
+    "jev.stats.breakdown": "超时 {timeout} · 降级 {degraded} · 非法 {illegal} · 强制 {forced}",
     "jev.stats.avg": "平均延迟",
     "jev.stats.spent": "本局花费",
     "jev.panel.lead": "两个演示共用同一条判断接口：代码算事实与候选项，JEV 只负责选。",
     "jev.demo.one": "演示 1 · 自动玩蛇",
     "jev.demo.two": "演示 2 · 自动驾驶",
     "jev.snake.title": "贪吃蛇自动游玩",
+    "jev.snake.boardLabel": "贪吃蛇棋盘",
     "jev.snake.lead":
       "每 tick 问一次 JEV：代码先算合法走法与事实，JEV 只负责选。固定时钟——tick 开始提问，tick 结束采用答案，没等到就直行。",
     "jev.car.title": "自动驾驶小车",
+    "jev.car.boardLabel": "赛道与小车",
     "jev.car.lead":
       "每 300–500 ms 问一次 JEV：代码先算十条候选动作（转向 × 油门或刹车），各预测 2 秒轨迹与指标，JEV 只负责选。窗口开始提问，窗口结束采用答案；没等到就维持上一动作一个窗口，再没等到就切回本地居中巡航。",
     "jev.car.periodGroup": "决策周期",
@@ -191,7 +281,7 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "jev.save": "写入排行榜",
     "jev.note":
       "演练网：每次决策都是一封 deweb.req/v0 加一封 deweb.res/v0。计费走本地托管，不广播上链。",
-    "jev.leaderboard": "排行榜第一：{name} · {n} 分（存档摊 #9103，把成绩写进去也是同一套调用）。",
+    "jev.leaderboard": "排行榜第一：{name} · {n} 分（演练网：成绩只存在本机浏览器，不跨设备）。",
     "jev.err.no_key": "未配置密钥",
     "jev.err.rate_limited": "被限流",
     "jev.err.quota": "额度不足",
@@ -210,33 +300,42 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "mcp.decisionEmpty": "还没有判断。跑一次 jev_decide，页面会把类型化答案摆在这里。",
     "spec.openJev": "看 JEV 摊（自动玩蛇 · 自动驾驶）",
     "svc.game.name": "存档",
-    "svc.game.headline": "全服分数记在容器里",
-    "svc.game.blurb": "静态网页自己记不住全服第一。分数写入提供方容器，换设备也能读回来。",
+    "svc.game.headline": "分数只留在这台设备",
+    "svc.game.blurb":
+      "静态网页自己记不住全服第一。这座演练网把分数存在本机浏览器里，换设备或换个浏览器就读不到。",
     "svc.payment.name": "支付",
     "svc.payment.headline": "按次把 BEM 打给别人",
     "svc.payment.blurb": "内容站不必自建收银。指定收款容器和金额，服务记账并回执。",
     "call.missing": "没有这个服务。",
+    "notFound.title": "找不到这个页面",
+    "notFound.body": "没有这个服务。回到目录挑一个摊位。",
+    "notFound.back": "返回目录",
     "call.mode": "模式 {m}",
     "price.label": "BEM / USDT",
     "price.reading": "读取中",
     "price.readOnchain": "从文件读取",
     "price.refresh": "刷新行情源",
     "price.hint": "模式 A：没有请求信。site.get 读提供方容器里的 /data/price.json，访客不用钱包。",
+    "price.err.http": "行情源 {code}，稍后重试",
+    "price.err.empty": "链上暂无有效报价",
+    "price.err.network": "读行情失败，稍后重试",
     "game.name": "名字",
     "game.score": "分数",
     "game.save": "保存 · {n} BEM",
     "game.board": "只读排行榜",
     "game.empty": "还没有分数。",
-    "game.saved": "分数已写入容器",
+    "game.saved": "分数已存到本机浏览器（演练网）",
     "pay.to": "收款容器",
     "pay.amount": "金额 BEM",
     "pay.memo": "备注",
     "pay.send": "支付 · 手续费 {n} BEM",
     "pay.ok": "已记账",
-    "pay.faucet": "演练龙头 +8 BEM",
     "pay.low": "BEM 不够付下一单。",
     faucet: "演练龙头 +8",
     "trace.title": "协议轨迹",
+    "trace.status.ok": "正常",
+    "trace.status.err": "出错",
+    "trace.status.run": "进行中",
     "trace.empty": "点一个服务并调用。轨迹写下解析、读清单、可选发信。",
     "trace.hub": "信箱 · DeWEB Hub",
     "trace.noMail": "还没有 TAP-10 消息。",
@@ -268,7 +367,9 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "emit.treasury": "协议金库 +{n} BEM",
     "emit.done": "调用完成",
     "emit.refund": "退回 {n} BEM",
-    "emit.refundDetail": "提供方没有交出匹配的回复",
+    "emit.refundDetail.validation": "本地校验没过（参数或转账余额不足），托管已退回",
+    "emit.refundDetail.provider": "提供方没有交出匹配的回复",
+    "emit.refundDetail.unknown": "调用失败，托管已退回",
     "err.noService": "没有这个服务",
     "err.noMethod": "没有这个方法",
     "err.busy": "上一笔还在处理",
@@ -283,6 +384,7 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "mcp.lead": "via.file 直接读。via.endpoint 才发信，且每次都要确认。",
     "mcp.specLink": "草案写在规范里",
     "mcp.railTitle": "WebMCP",
+    "mcp.agentBadge": "智能体",
     "mcp.railHint": "站点登记工具，Agent 直接调",
     "mcp.origin": "顶层源",
     "mcp.siteLead":
@@ -290,11 +392,14 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "mcp.score": "分数",
     "mcp.viewJson": "查看 /.tape/mcp.json",
     "mcp.agentHint": "登记过的工具才调。via.file 直接读；via.endpoint 会弹出确认再发信。",
-    "mcp.free": "免费 · 页内执行",
+    "mcp.agentPane": "Agent",
+    "mcp.lastTool": "最近工具 · {tool}",
+    "mcp.consentQueued": "排队等待确认：{n}",
     "mcp.emptyLog": "还没有 Agent 动作。",
     "mcp.fileHint": "via.file · site.get · 不发信",
     "mcp.sendHint": "via.endpoint · TAP-10 发送 · 需要确认",
-    "mcp.consent": "发送 {tool}？这是一笔钱包交易，元数据会公开留下。",
+    "mcp.consent":
+      "发送 {tool} 到 {to}？钱包会结算 {n} BEM（演练网本地结算，不广播上链），元数据公开留下。",
     "mcp.allow": "确认发送",
     "mcp.deny": "取消",
     "mcp.declined": "用户取消发送",
@@ -330,10 +435,12 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     brand: "DeWEB MCP",
     badge: "draft",
     tagline: "Sites expose tools. Containers call each other.",
+    "meta.description":
+      "DeWEB MCP · unofficial draft. TAP-10 request/response plus WebMCP tools for on-chain sites.",
     "nav.webmcp": "WebMCP",
     "nav.spec": "Spec",
-    "nav.home": "Catalog",
     "status.idle": "IDLE",
+    "locale.group": "interface language",
     "status.busy": "IN FLIGHT",
     locked: "lock {n}",
     "home.kicker": "DeWEB · TapeSend · WebMCP",
@@ -349,6 +456,7 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "mode.A": "read",
     "mode.B": "on-chain",
     "mode.C": "operator",
+    "svc.balance": "container balance {n} BEM",
     "svc.price.name": "Quote",
     "svc.price.headline": "Write the price as a chain file",
     "svc.price.blurb":
@@ -361,6 +469,7 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "jev.method": "method {name} · {n} BEM per call",
     "jev.stream.title": "Decision stream",
     "jev.stream.count": "{n} ticks",
+    "jev.stream.shown": "showing the last {shown}",
     "jev.stream.empty":
       "Start a round. Each tick computes the facts first, then asks JEV which move to take.",
     "jev.source.local": "local",
@@ -371,11 +480,13 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "jev.state.degraded": "degraded",
     "jev.options": "legal moves {list}",
     "jev.degraded": "Degraded: local policy (not JEV) · {reason}",
+    "jev.detail": "developer detail",
     "jev.illegal": "JEV picked “{pick}”, which is not a legal move — played straight",
     "jev.messages.title": "Message strip",
     "jev.messages.empty":
       "No TAP-10 messages yet. Each decision sends one request letter and brings one reply back.",
     "jev.messages.none": "the rules forced the move, nothing was sent",
+    "jev.messages.notSent": "not sent · {reason}",
     "jev.messages.noReply": "no reply yet",
     "jev.messages.paid": "envelope {n} BEM",
     "jev.messages.charged": "settled {n} BEM",
@@ -383,6 +494,9 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "jev.messages.late": "Reply arrived late: this tick was already played straight",
     "jev.stats.decisions": "ticks",
     "jev.stats.jev": "JEV answered",
+    "jev.stats.adopted": "adopted JEV",
+    "jev.stats.breakdown":
+      "timeout {timeout} · degraded {degraded} · illegal {illegal} · forced {forced}",
     "jev.stats.avg": "avg latency",
     "jev.stats.spent": "round spend",
     "jev.panel.lead":
@@ -390,9 +504,11 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "jev.demo.one": "Demo 1 · Snake, played",
     "jev.demo.two": "Demo 2 · Car, driven",
     "jev.snake.title": "Snake, played by JEV",
+    "jev.snake.boardLabel": "snake board",
     "jev.snake.lead":
       "One choice per tick: the code computes the legal moves and the facts, JEV only picks. Fixed clock — ask at tick start, adopt the answer at tick end, straight when nothing arrived.",
     "jev.car.title": "Car, driven by JEV",
+    "jev.car.boardLabel": "car track",
     "jev.car.lead":
       "One choice every 300–500 ms: the code simulates ten candidate actions (steering × brake or throttle), each with a 2 s predicted path and its numbers, and JEV only picks. Ask at window start, adopt the answer at window end; a window with nothing keeps the last action for one window, then the local centred cruise takes over.",
     "jev.car.periodGroup": "decision period",
@@ -425,7 +541,7 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "jev.car.stays": "stays on the road",
     "jev.car.waiting": "No decision window yet — press Start to send the first letter.",
     "jev.car.note":
-      "Drill net: same call, envelope and billing as the snake. With no key, or when a call fails, the demo degrades to a local centred cruise and the badge says so.",
+      "Playground: same call, envelope and billing as the snake. With no key, or when a call fails, the demo degrades to a local centred cruise and the badge says so.",
     "jev.badge.idle": "not started",
     "jev.badge.jev": "JEV live",
     "jev.badge.local": "local policy",
@@ -450,16 +566,16 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "jev.note":
       "Playground: every decision is a deweb.req/v0 plus a deweb.res/v0. Billing is local escrow; nothing is broadcast on-chain.",
     "jev.leaderboard":
-      "Board leader: {name} · {n} (the saves stall #9103 books it through the same call).",
+      "Board leader: {name} · {n} pts (playground: kept in this browser only, not shared).",
     "jev.err.no_key": "no key configured",
     "jev.err.rate_limited": "rate limited",
-    "jev.err.quota": "quota",
+    "jev.err.quota": "out of quota",
     "jev.err.unauthorized": "key rejected",
     "jev.err.bad_request": "request rejected",
     "jev.err.invalid_request": "malformed request",
     "jev.err.upstream": "upstream failed",
     "jev.err.timeout": "timeout",
-    "jev.err.network": "network",
+    "jev.err.network": "network unreachable",
     "jev.err.parse_error": "unreadable response",
     "jev.err.insufficient_bem": "not enough BEM",
     "jev.sample.state":
@@ -471,14 +587,17 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
       "No judgement yet. Run jev_decide and the page shows the typed answer here.",
     "spec.openJev": "Open the JEV stall (snake · car)",
     "svc.game.name": "Saves",
-    "svc.game.headline": "Leaderboard lives in a container",
+    "svc.game.headline": "Scores stay on this device",
     "svc.game.blurb":
-      "A static page cannot keep a global first place. Scores land in the provider container.",
+      "A static page cannot keep a global first place. This playground keeps scores in this browser only — another device or browser will not see them.",
     "svc.payment.name": "Pay",
     "svc.payment.headline": "Send BEM per call",
     "svc.payment.blurb":
       "A content site need not run a till. Name a payee and amount; the service books it and receipts.",
     "call.missing": "No such service.",
+    "notFound.title": "Page not found",
+    "notFound.body": "No such service. Pick a stall from the catalog.",
+    "notFound.back": "Back to the catalog",
     "call.mode": "mode {m}",
     "price.label": "BEM / USDT",
     "price.reading": "loading",
@@ -486,21 +605,26 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "price.refresh": "Refresh source",
     "price.hint":
       "Mode A: no request mail. site.get reads /data/price.json in the provider container. Visitors need no wallet.",
+    "price.err.http": "quote source {code} — try again later",
+    "price.err.empty": "no usable quote on chain yet",
+    "price.err.network": "quote read failed — try again later",
     "game.name": "Name",
     "game.score": "Score",
     "game.save": "Save · {n} BEM",
     "game.board": "Read board",
     "game.empty": "No scores yet.",
-    "game.saved": "Score written to the container",
+    "game.saved": "Score kept in this browser (playground)",
     "pay.to": "Payee container",
     "pay.amount": "Amount BEM",
     "pay.memo": "Memo",
     "pay.send": "Pay · fee {n} BEM",
     "pay.ok": "Booked",
-    "pay.faucet": "Playground faucet +8 BEM",
     "pay.low": "Not enough BEM for the next call.",
     faucet: "Faucet +8",
     "trace.title": "Trace",
+    "trace.status.ok": "OK",
+    "trace.status.err": "ERR",
+    "trace.status.run": "RUN",
     "trace.empty":
       "Pick a service and call it. The trace records resolve, manifest, optional mail.",
     "trace.hub": "Inbox · DeWEB Hub",
@@ -533,7 +657,10 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "emit.treasury": "Treasury +{n} BEM",
     "emit.done": "Call finished",
     "emit.refund": "Refund {n} BEM",
-    "emit.refundDetail": "No matching reply from the provider",
+    "emit.refundDetail.validation":
+      "Local check failed (bad input or transfer balance) — escrow refunded",
+    "emit.refundDetail.provider": "No matching reply from the provider",
+    "emit.refundDetail.unknown": "Call failed — escrow refunded",
     "err.noService": "No such service",
     "err.noMethod": "No such method",
     "err.busy": "Previous call still running",
@@ -548,6 +675,7 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "mcp.lead": "via.file reads. via.endpoint sends TAP-10 and always asks first.",
     "mcp.specLink": "Draft is in the spec",
     "mcp.railTitle": "WebMCP",
+    "mcp.agentBadge": "Agent",
     "mcp.railHint": "The site registers tools; the agent calls them",
     "mcp.origin": "top-level",
     "mcp.siteLead":
@@ -555,11 +683,14 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "mcp.score": "Score",
     "mcp.viewJson": "View /.tape/mcp.json",
     "mcp.agentHint": "Call registered tools only. via.file reads; via.endpoint asks, then sends.",
-    "mcp.free": "free · in-page",
+    "mcp.agentPane": "Agent",
+    "mcp.lastTool": "last tool · {tool}",
+    "mcp.consentQueued": "queued confirmations: {n}",
     "mcp.emptyLog": "No agent actions yet.",
     "mcp.fileHint": "via.file · site.get · no send",
     "mcp.sendHint": "via.endpoint · TAP-10 send · confirm",
-    "mcp.consent": "Send {tool}? A wallet transaction; metadata is public and stays.",
+    "mcp.consent":
+      "Send {tool} to {to}? The wallet settles {n} BEM (playground-local, nothing is broadcast on-chain); metadata stays public.",
     "mcp.allow": "Send",
     "mcp.deny": "Cancel",
     "mcp.declined": "User cancelled the send",
@@ -598,10 +729,12 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     brand: "DeWEB MCP",
     badge: "草案",
     tagline: "サイトがツールを出し、コンテナ同士が呼び合う",
+    "meta.description":
+      "DeWEB MCP · 非公式草案。TAP-10 の要求/応答と WebMCP ツールで、チェーン上のサイトを呼び出せる道具にする。",
     "nav.webmcp": "WebMCP",
     "nav.spec": "仕様",
-    "nav.home": "一覧",
     "status.idle": "待機",
+    "locale.group": "表示言語",
     "status.busy": "実行中",
     locked: "ロック {n}",
     "home.kicker": "DeWEB · TapeSend · WebMCP",
@@ -612,11 +745,12 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "home.openMcp": "WebMCP を開く",
     "home.readSpec": "草案を読む",
     "home.note":
-      "演習網：メッセージ形は TAP-10。相場は実取引対、JEV の判断は実モデル（鍵がなければローカル降級）。決済はチェーンに放送しない。",
+      "演習網：メッセージ形は TAP-10。相場は実取引対、JEV の判断は実モデル（鍵がなければローカル降格）。決済はチェーンに放送しない。",
     "home.open": "開く",
     "mode.A": "読取",
     "mode.B": "チェーン記録",
     "mode.C": "受注",
+    "svc.balance": "コンテナ残高 {n} BEM",
     "svc.price.name": "相場",
     "svc.price.headline": "価格をチェーン上のファイルに書く",
     "svc.price.blurb":
@@ -629,20 +763,23 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "jev.method": "メソッド {name} · 1回 {n} BEM",
     "jev.stream.title": "判断ストリーム",
     "jev.stream.count": "{n} 手",
+    "jev.stream.shown": "最新 {shown} 件を表示",
     "jev.stream.empty": "一局始めよう。各手はまず事実を計算し、そのうえで JEV にどの手かを尋ねる。",
     "jev.source.local": "ローカル",
     "jev.state.answered": "JEV 応答",
     "jev.state.forced": "唯一の手",
     "jev.state.timeout": "タイムアウト·直進",
     "jev.state.illegal": "不正な答え",
-    "jev.state.degraded": "降級",
+    "jev.state.degraded": "降格",
     "jev.options": "合法手 {list}",
-    "jev.degraded": "降級：ローカル方針（非 JEV）· {reason}",
+    "jev.degraded": "降格：ローカル方針（非 JEV）· {reason}",
+    "jev.detail": "開発者向け詳細",
     "jev.illegal": "JEV は「{pick}」と答えたが合法手ではないため直進した",
     "jev.messages.title": "メッセージ列",
     "jev.messages.empty":
       "まだ TAP-10 メッセージはない。各判断は要求便を一通出し、返信を一通受け取る。",
     "jev.messages.none": "規則による強制手のため送信なし",
+    "jev.messages.notSent": "未送信 · {reason}",
     "jev.messages.noReply": "返信なし",
     "jev.messages.paid": "封筒 {n} BEM",
     "jev.messages.charged": "決済済み {n} BEM",
@@ -650,6 +787,9 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "jev.messages.late": "返信が遅れた：この手は直進で打たれた",
     "jev.stats.decisions": "手数",
     "jev.stats.jev": "JEV 応答",
+    "jev.stats.adopted": "JEV 採用",
+    "jev.stats.breakdown":
+      "タイムアウト {timeout} · 降格 {degraded} · 不正 {illegal} · 強制 {forced}",
     "jev.stats.avg": "平均遅延",
     "jev.stats.spent": "この局の支出",
     "jev.panel.lead":
@@ -657,9 +797,11 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "jev.demo.one": "デモ 1 · スネーク自動プレイ",
     "jev.demo.two": "デモ 2 · 自動運転",
     "jev.snake.title": "JEV が遊ぶスネーク",
+    "jev.snake.boardLabel": "スネーク盤面",
     "jev.snake.lead":
       "1 tick につき 1 回の choice。合法手と事実はコードが先に計算し、JEV は選ぶだけ。固定クロック——tick 開始で問い、tick 終了で答えを採用、届かなければ直進。",
     "jev.car.title": "JEV が運転する車",
+    "jev.car.boardLabel": "カーの走路",
     "jev.car.lead":
       "300–500 ms ごとに 1 回の choice。コードが十の候補動作（操舵 × ブレーキ／アクセル）を先に 2 秒ぶん予測し、JEV は選ぶだけ。窓の開始で問い、窓の終了で採用。届かなければ直前に 1 窓だけ同じ動作を続け、次も届かなければローカルの中央巡航に切り替える。",
     "jev.car.periodGroup": "判断周期",
@@ -707,7 +849,7 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "jev.step": "{n} 手目",
     "jev.wallet": "残高 {n} BEM",
     "jev.tickWait": "この tick は {n} ms 待つ",
-    "jev.lowBem": "次の判断を払う BEM が足りない。デモは降級した。",
+    "jev.lowBem": "次の判断を払う BEM が足りない。デモは降格した。",
     "jev.over": "一局終了（{reason}）、得点 {n}。",
     "jev.end.wall": "壁に衝突",
     "jev.end.self": "自分を噛んだ",
@@ -716,7 +858,8 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "jev.save": "ランキングへ書き込む",
     "jev.note":
       "演習網：各判断は deweb.req/v0 と deweb.res/v0 の一対。課金はローカルの預りで、チェーンには放送しない。",
-    "jev.leaderboard": "ランキング首位：{name} · {n} 点（セーブ屋 #9103 も同じ呼び出しで書く）。",
+    "jev.leaderboard":
+      "ランキング首位：{name} · {n} 点（演習網：このブラウザにのみ保存、共有されない）。",
     "jev.err.no_key": "鍵が未設定",
     "jev.err.rate_limited": "レート制限",
     "jev.err.quota": "枠不足",
@@ -735,34 +878,43 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "mcp.decisionEmpty": "まだ判断はない。jev_decide を一度走らせると型付きの答えがここに出る。",
     "spec.openJev": "JEV の屋台（スネーク・車）を開く",
     "svc.game.name": "セーブ",
-    "svc.game.headline": "ランキングはコンテナに",
-    "svc.game.blurb": "静的ページは全サーバー一位を覚えられない。点数は提供者のコンテナへ。",
+    "svc.game.headline": "点数はこの端末だけ",
+    "svc.game.blurb":
+      "静的ページは全サーバー一位を覚えられない。この演習網では点数はこのブラウザにだけ残り、別の端末や別のブラウザでは読めない。",
     "svc.payment.name": "支払い",
     "svc.payment.headline": "都度 BEM を送る",
     "svc.payment.blurb": "コンテンツ側はレジを自前で持たない。宛先と金額を指定し、領収を受け取る。",
     "call.missing": "このサービスはない。",
+    "notFound.title": "ページが見つかりません",
+    "notFound.body": "そのサービスはない。一覧から選ぶこと。",
+    "notFound.back": "一覧へ戻る",
     "call.mode": "モード {m}",
     "price.label": "BEM / USDT",
     "price.reading": "読込中",
     "price.readOnchain": "ファイルを読む",
     "price.refresh": "ソースを更新",
     "price.hint":
-      "モード A：リクエスト便なし。site.get が提供者コンテナの /data/price.json を読む。財布は不要。",
+      "モード A：リクエスト便なし。site.get が提供者コンテナの /data/price.json を読む。ウォレットは不要。",
+    "price.err.http": "相場ソース {code} — あとで再試行",
+    "price.err.empty": "チェーン上に有効な相場がない",
+    "price.err.network": "相場の取得に失敗 — あとで再試行",
     "game.name": "名前",
     "game.score": "スコア",
     "game.save": "保存 · {n} BEM",
     "game.board": "ランキング読取",
     "game.empty": "まだスコアがない。",
-    "game.saved": "スコアをコンテナに書いた",
+    "game.saved": "点数をこのブラウザに保存した（演習網）",
     "pay.to": "受取コンテナ",
     "pay.amount": "金額 BEM",
     "pay.memo": "メモ",
     "pay.send": "支払 · 手数料 {n} BEM",
     "pay.ok": "記帳した",
-    "pay.faucet": "演習蛇口 +8 BEM",
     "pay.low": "次の呼び出しに BEM が足りない。",
     faucet: "蛇口 +8",
     "trace.title": "軌跡",
+    "trace.status.ok": "正常",
+    "trace.status.err": "異常",
+    "trace.status.run": "実行中",
     "trace.empty": "サービスを選んで呼び出す。解析・一覧・任意の送信が記録される。",
     "trace.hub": "受信箱 · DeWEB Hub",
     "trace.noMail": "まだ TAP-10 メッセージはない。",
@@ -794,7 +946,9 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "emit.treasury": "財庫 +{n} BEM",
     "emit.done": "呼び出し完了",
     "emit.refund": "{n} BEM を返す",
-    "emit.refundDetail": "一致する返信がなかった",
+    "emit.refundDetail.validation": "ローカル検証で失敗（入力または送金残高）— 預りは返金済み",
+    "emit.refundDetail.provider": "一致する返信がなかった",
+    "emit.refundDetail.unknown": "呼び出し失敗 — 預りは返金済み",
     "err.noService": "このサービスはない",
     "err.noMethod": "このメソッドはない",
     "err.busy": "前の呼び出しがまだ動いている",
@@ -809,6 +963,7 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "mcp.lead": "via.file は読むだけ。via.endpoint は TAP-10 送信で、毎回確認する。",
     "mcp.specLink": "草案は仕様にある",
     "mcp.railTitle": "WebMCP",
+    "mcp.agentBadge": "エージェント",
     "mcp.railHint": "サイトがツールを登録し、エージェントが呼ぶ",
     "mcp.origin": "トップレベル",
     "mcp.siteLead":
@@ -816,11 +971,14 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "mcp.score": "スコア",
     "mcp.viewJson": "/.tape/mcp.json を見る",
     "mcp.agentHint": "登録済みツールだけ。via.file は読む。via.endpoint は確認してから送る。",
-    "mcp.free": "無料 · ページ内",
+    "mcp.agentPane": "エージェント",
+    "mcp.lastTool": "直近のツール · {tool}",
+    "mcp.consentQueued": "確認待ち：{n} 件",
     "mcp.emptyLog": "まだエージェント動作はない。",
     "mcp.fileHint": "via.file · site.get · 送信なし",
     "mcp.sendHint": "via.endpoint · TAP-10 送信 · 確認が必要",
-    "mcp.consent": "{tool} を送る？ウォレット取引で、メタデータは公開のまま残る。",
+    "mcp.consent":
+      "「{tool}」を {to} へ送る？ウォレットから {n} BEM を決済する（演習網のローカル決済、チェーンには放送しない）。メタデータは公開のまま残る。",
     "mcp.allow": "送る",
     "mcp.deny": "やめる",
     "mcp.declined": "送信をやめた",
@@ -857,10 +1015,12 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     brand: "DeWEB MCP",
     badge: "초안",
     tagline: "사이트가 도구를 열고, 컨테이너끼리 호출한다",
+    "meta.description":
+      "DeWEB MCP · 비공식 초안. TAP-10 요청/응답과 WebMCP 도구로 체인 사이트를 호출 가능한 도구로 만든다.",
     "nav.webmcp": "WebMCP",
     "nav.spec": "명세",
-    "nav.home": "목록",
     "status.idle": "대기",
+    "locale.group": "인터페이스 언어",
     "status.busy": "진행 중",
     locked: "잠금 {n}",
     "home.kicker": "DeWEB · TapeSend · WebMCP",
@@ -876,6 +1036,7 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "mode.A": "읽기",
     "mode.B": "온체인",
     "mode.C": "수주",
+    "svc.balance": "컨테이너 잔액 {n} BEM",
     "svc.price.name": "시세",
     "svc.price.headline": "가격을 체인 파일로 쓴다",
     "svc.price.blurb":
@@ -888,6 +1049,7 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "jev.method": "메서드 {name} · 회당 {n} BEM",
     "jev.stream.title": "판단 스트림",
     "jev.stream.count": "{n} 수",
+    "jev.stream.shown": "최근 {shown}건 표시",
     "jev.stream.empty": "한 판 시작. 매 수마다 사실을 먼저 계산하고, JEV에게 어느 쪽인지 묻는다.",
     "jev.source.local": "로컬",
     "jev.state.answered": "JEV 응답",
@@ -897,10 +1059,12 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "jev.state.degraded": "대체",
     "jev.options": "합법 수 {list}",
     "jev.degraded": "대체: 로컬 정책(JEV 아님) · {reason}",
+    "jev.detail": "개발자 상세",
     "jev.illegal": "JEV가 「{pick}」이라 답했지만 합법 수가 아니라 직진했다",
     "jev.messages.title": "메시지 줄",
     "jev.messages.empty": "아직 TAP-10 메시지가 없다. 판단마다 요청 편지 한 통, 회신 한 통.",
     "jev.messages.none": "규칙이 강제한 수라 발신 없음",
+    "jev.messages.notSent": "발신 없음 · {reason}",
     "jev.messages.noReply": "회신 없음",
     "jev.messages.paid": "봉투 {n} BEM",
     "jev.messages.charged": "정산 {n} BEM",
@@ -908,6 +1072,9 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "jev.messages.late": "회신이 늦었다: 이 수는 직진으로 처리됨",
     "jev.stats.decisions": "수",
     "jev.stats.jev": "JEV 응답",
+    "jev.stats.adopted": "JEV 채택",
+    "jev.stats.breakdown":
+      "시간 초과 {timeout} · 대체 {degraded} · 잘못된 답 {illegal} · 강제 {forced}",
     "jev.stats.avg": "평균 지연",
     "jev.stats.spent": "이번 판 지출",
     "jev.panel.lead":
@@ -915,9 +1082,11 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "jev.demo.one": "데모 1 · 스네이크 자동 플레이",
     "jev.demo.two": "데모 2 · 자율 주행",
     "jev.snake.title": "JEV가 두는 스네이크",
+    "jev.snake.boardLabel": "스네이크 보드",
     "jev.snake.lead":
       "tick마다 choice 한 번. 합법 수와 사실은 코드가 먼저 계산하고 JEV는 고르기만 한다. 고정 시계——tick 시작에 묻고, tick 끝에 채택, 안 오면 직진.",
     "jev.car.title": "JEV가 운전하는 자동차",
+    "jev.car.boardLabel": "자동차 주로",
     "jev.car.lead":
       "300–500 ms마다 choice 한 번. 코드가 열 가지 후보 동작(조향 × 브레이크/액셀)을 각각 2초 예측하고, JEV는 고르기만 한다. 창 시작에 묻고 창 끝에 채택하며, 답이 없으면 직전 동작을 한 창만 유지하고 그다음엔 로컬 중앙 주행으로 전환한다.",
     "jev.car.periodGroup": "결정 주기",
@@ -927,7 +1096,7 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "jev.car.state.timeout_hold": "타임아웃 · 직전 동작 유지",
     "jev.car.state.timeout_local": "타임아웃 · 로컬 정책으로 전환",
     "jev.car.state.illegal": "후보 밖 · 로컬 대체",
-    "jev.car.state.degraded": "강등 · 로컬 정책",
+    "jev.car.state.degraded": "대체 · 로컬 정책",
     "jev.car.options": "선택지 {list}",
     "jev.car.messages.late": "회신 지연: 이 창은 이미 직전 동작으로 주행됨",
     "jev.car.control.start": "주행 시작",
@@ -950,7 +1119,7 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "jev.car.stays": "주로 유지",
     "jev.car.waiting": "아직 결정 창이 없다. 시작을 누르면 첫 편지를 보낸다.",
     "jev.car.note":
-      "연습망: 스네이크와 같은 호출·봉투·과금. 키가 없거나 호출이 실패하면 로컬 중앙 주행으로 강등되고 배지로 표시된다.",
+      "연습망: 스네이크와 같은 호출·봉투·과금. 키가 없거나 호출이 실패하면 로컬 중앙 주행으로 대체되고 배지로 표시된다.",
     "jev.badge.idle": "시작 전",
     "jev.badge.jev": "JEV 연결",
     "jev.badge.local": "로컬 정책",
@@ -974,7 +1143,7 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "jev.save": "순위표에 쓰기",
     "jev.note":
       "연습망: 판단마다 deweb.req/v0 와 deweb.res/v0 한 쌍. 결제는 로컬 에스크로이며 체인에 방송하지 않는다.",
-    "jev.leaderboard": "순위 1위: {name} · {n} (세이브 가판 #9103도 같은 호출로 기록한다).",
+    "jev.leaderboard": "순위표 1위: {name} · {n}점 (연습망: 이 브라우저에만 저장, 공유되지 않음).",
     "jev.err.no_key": "키 미설정",
     "jev.err.rate_limited": "속도 제한",
     "jev.err.quota": "할당량 부족",
@@ -994,13 +1163,17 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
       "아직 판단이 없다. jev_decide를 한 번 돌리면 타입 있는 답이 여기 표시된다.",
     "spec.openJev": "JEV 가판(스네이크 · 자동차) 열기",
     "svc.game.name": "세이브",
-    "svc.game.headline": "순위는 컨테이너에",
-    "svc.game.blurb": "정적 페이지는 전체 1등을 기억하지 못한다. 점수는 제공자 컨테이너에 쌓인다.",
+    "svc.game.headline": "점수는 이 기기에만",
+    "svc.game.blurb":
+      "정적 페이지는 전체 1등을 기억하지 못한다. 이 연습망은 점수를 이 브라우저에만 두고, 다른 기기나 다른 브라우저에서는 보이지 않는다.",
     "svc.payment.name": "결제",
     "svc.payment.headline": "호출마다 BEM을 보낸다",
     "svc.payment.blurb":
       "콘텐츠 사이트는 계산대를 직접 두지 않는다. 수취 컨테이너와 금액을 지정한다.",
     "call.missing": "그런 서비스가 없다.",
+    "notFound.title": "페이지를 찾을 수 없습니다",
+    "notFound.body": "그런 서비스는 없다. 목록에서 골라라.",
+    "notFound.back": "목록으로 돌아가기",
     "call.mode": "모드 {m}",
     "price.label": "BEM / USDT",
     "price.reading": "읽는 중",
@@ -1008,21 +1181,26 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "price.refresh": "시세 원 새로고침",
     "price.hint":
       "모드 A: 요청 편지 없음. site.get 이 제공자 컨테이너의 /data/price.json을 읽는다. 지갑 불필요.",
+    "price.err.http": "시세 소스 {code} — 나중에 다시 시도",
+    "price.err.empty": "체인에 유효한 시세가 없다",
+    "price.err.network": "시세 조회 실패 — 나중에 다시 시도",
     "game.name": "이름",
     "game.score": "점수",
     "game.save": "저장 · {n} BEM",
-    "game.board": "순위 읽기",
+    "game.board": "순위표 읽기",
     "game.empty": "아직 점수가 없다.",
-    "game.saved": "점수를 컨테이너에 썼다",
+    "game.saved": "점수를 이 브라우저에 저장했다(연습망)",
     "pay.to": "수취 컨테이너",
     "pay.amount": "금액 BEM",
     "pay.memo": "메모",
     "pay.send": "결제 · 수수료 {n} BEM",
     "pay.ok": "기장됨",
-    "pay.faucet": "연습 수도꼭지 +8 BEM",
     "pay.low": "다음 호출에 BEM이 부족하다.",
     faucet: "수도꼭지 +8",
     "trace.title": "궤적",
+    "trace.status.ok": "정상",
+    "trace.status.err": "오류",
+    "trace.status.run": "실행 중",
     "trace.empty": "서비스를 골라 호출한다. 해석, 목록, 선택적 발신이 기록된다.",
     "trace.hub": "받은편지함 · DeWEB Hub",
     "trace.noMail": "아직 TAP-10 메시지가 없다.",
@@ -1054,7 +1232,9 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "emit.treasury": "금고 +{n} BEM",
     "emit.done": "호출 완료",
     "emit.refund": "{n} BEM 반환",
-    "emit.refundDetail": "일치하는 회신이 없었다",
+    "emit.refundDetail.validation": "로컬 검증 실패(입력 또는 이체 잔액) — 에스크로 환불됨",
+    "emit.refundDetail.provider": "일치하는 회신이 없었다",
+    "emit.refundDetail.unknown": "호출 실패 — 에스크로 환불됨",
     "err.noService": "그런 서비스가 없다",
     "err.noMethod": "그런 메서드가 없다",
     "err.busy": "이전 호출이 아직 진행 중",
@@ -1069,6 +1249,7 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "mcp.lead": "via.file 은 읽기만. via.endpoint 는 TAP-10 발신이며 매번 확인한다.",
     "mcp.specLink": "초안은 명세에",
     "mcp.railTitle": "WebMCP",
+    "mcp.agentBadge": "에이전트",
     "mcp.railHint": "사이트가 도구를 등록하고 에이전트가 호출",
     "mcp.origin": "최상위 원본",
     "mcp.siteLead":
@@ -1076,11 +1257,14 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     "mcp.score": "점수",
     "mcp.viewJson": "/.tape/mcp.json 보기",
     "mcp.agentHint": "등록된 도구만. via.file 은 읽고, via.endpoint 는 확인 후 보낸다.",
-    "mcp.free": "무료 · 페이지 안",
+    "mcp.agentPane": "에이전트",
+    "mcp.lastTool": "최근 도구 · {tool}",
+    "mcp.consentQueued": "대기 중인 확인: {n}건",
     "mcp.emptyLog": "아직 에이전트 동작이 없다.",
     "mcp.fileHint": "via.file · site.get · 발신 없음",
     "mcp.sendHint": "via.endpoint · TAP-10 발신 · 확인 필요",
-    "mcp.consent": "{tool} 을 보낼까? 지갑 거래이고 메타데이터는 공개로 남는다.",
+    "mcp.consent":
+      "{tool} 을(를) {to} 로 보낼까? 지갑에서 {n} BEM 을 정산한다(연습망 로컬 정산, 체인에 방송하지 않음). 메타데이터는 공개로 남는다.",
     "mcp.allow": "보내기",
     "mcp.deny": "취소",
     "mcp.declined": "사용자가 발신을 취소했다",

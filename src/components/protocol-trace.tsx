@@ -17,18 +17,14 @@ export function ProtocolTrace() {
           {current ? (
             <Badge
               variant={
-                current.status === "ok"
-                  ? "live"
-                  : current.status === "error"
-                    ? "danger"
-                    : "warn"
+                current.status === "ok" ? "live" : current.status === "error" ? "danger" : "warn"
               }
             >
               {current.status === "ok"
-                ? "OK"
+                ? t("trace.status.ok")
                 : current.status === "error"
-                  ? "ERR"
-                  : "RUN"}
+                  ? t("trace.status.err")
+                  : t("trace.status.run")}
             </Badge>
           ) : null}
         </div>
@@ -46,7 +42,7 @@ export function ProtocolTrace() {
                     <span className="font-mono text-[10px] uppercase text-accent">
                       {t(`kind.${ev.kind}`)}
                     </span>
-                    <span className="text-xs text-fg">{ev.title}</span>
+                    <span className="text-xs text-fg">{t(ev.code, ev.vars)}</span>
                   </div>
                   {ev.detail ? (
                     <p className="mt-0.5 break-all font-mono text-[10px] text-subtle">
