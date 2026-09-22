@@ -11,7 +11,9 @@ export const Route = createFileRoute("/")({ component: Home });
 function Home() {
   const t = useT();
   return (
-    <AppShell>
+    // The cover: hero + the four stalls. The rail and the trace arrive with
+    // the first service page (see AppShell).
+    <AppShell rail={false} trace={false}>
       <div className="space-y-6">
         <section className="rounded-xl bg-surface px-5 py-6 shadow-[var(--shadow-border)] sm:px-8 sm:py-8">
           <p className="font-mono text-xs uppercase tracking-[0.18em] text-muted">

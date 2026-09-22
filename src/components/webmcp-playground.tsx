@@ -4,13 +4,19 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { MCP_MANIFEST, MCP_TOOLS, isFileVia, type McpToolDef } from "@/lib/tape/mcp-manifest";
+import {
+  MCP_MANIFEST,
+  MCP_TOOLS,
+  PAGE_BLOCKS,
+  isFileVia,
+  type McpToolDef,
+} from "@/lib/tape/mcp-manifest";
 import { useMcpUi } from "@/lib/tape/mcp-ui";
 import { useTape } from "@/lib/tape/store";
 import { getModelContext } from "@/lib/tape/webmcp";
 import { WebMcpHost } from "@/components/webmcp-host";
 import { useT } from "@/lib/i18n";
-import { formatBem } from "@/lib/utils";
+import { cn, formatBnb, formatClock } from "@/lib/utils";
 
 export function WebMcpPlayground() {
   return (
@@ -28,13 +34,32 @@ export function WebMcpPlayground() {
   );
 }
 
+/**
+ * The site's own face: the three tools it registered, each beside the block of
+ * data it produces.
+ *
+ * The tool name is on every block on purpose. The page's own review found the
+ * price / score / decision reading as three unrelated widgets and "score 88" as
+ * a number with no provenance; they are the same thing the agent calls, so the
+ * blocks say which tool fills them, an unrun block says nothing has run yet,
+ * and the block a result just landed in is ringed for a moment — a result shows
+ * up twice (here and in the agent's raw JSON), and the ring is what says which
+ * call it belongs to.
+ */
 function SitePane() {
   const t = useT();
   const decision = useMcpUi((s) => s.decision);
   const score = useMcpUi((s) => s.score);
   const lastTool = useMcpUi((s) => s.lastTool);
+  const highlightTool = useMcpUi((s) => s.highlightTool);
   const price = useTape((s) => s.price);
   const board = useTape((s) => s.board);
+
+  const blockClass = (tool: string) =>
+    cn(
+      "rounded-lg bg-raised px-3 py-3 shadow-[var(--shadow-border)] transition-shadow duration-[var(--motion-quick)]",
+      highlightTool === tool && "ring-1 ring-accent",
+    );
 
   return (
     <section className="rounded-xl bg-surface p-4 shadow-[var(--shadow-border)] sm:p-5">
@@ -47,73 +72,95 @@ function SitePane() {
       </div>
       <p className="mt-3 text-xs leading-relaxed text-muted">{t("mcp.siteLead")}</p>
 
-      <div className="mt-4 flex flex-wrap items-end gap-x-6 gap-y-2 rounded-lg bg-raised px-3 py-3 shadow-[var(--shadow-border)]">
-        <div>
-          <p className="text-[10px] font-medium uppercase tracking-wide text-subtle">BEM</p>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <div className={blockClass(PAGE_BLOCKS.price)} data-testid="mcp-block-price">
+          <p className="font-mono text-[10px] text-accent">{PAGE_BLOCKS.price}</p>
+          <p className="mt-2 text-[10px] font-medium uppercase tracking-wide text-subtle">BEM</p>
           <p className="mt-1 font-mono text-base tabular-nums">
             {price?.ok ? `$${price.usd.toFixed(4)}` : "—"}
           </p>
+          {/* The stamp belongs to a read that worked: it says when this block's
+              tool last filled it, not when the page loaded. */}
+          {price?.ok ? (
+            <p className="mt-1 font-mono text-[10px] text-subtle">
+              {t("price.fetchedAt", { time: formatClock(price.fetchedAt) })}
+            </p>
+          ) : null}
         </div>
-        <div>
-          <p className="text-[10px] font-medium uppercase tracking-wide text-subtle">
+
+        <div className={blockClass(PAGE_BLOCKS.score)} data-testid="mcp-block-score">
+          <p className="font-mono text-[10px] text-accent">{PAGE_BLOCKS.score}</p>
+          <p className="mt-2 text-[10px] font-medium uppercase tracking-wide text-subtle">
             {t("mcp.score")}
           </p>
-          <p className="mt-1 font-mono text-base tabular-nums">{score}</p>
+          {/* Nothing has been written yet: this block is what the tool's own
+              result looks like, so it may not show a score nobody saved. */}
+          {score === null ? (
+            <p className="mt-1 text-sm text-muted">{t("mcp.scoreEmpty")}</p>
+          ) : (
+            <p className="mt-1 font-mono text-base tabular-nums">{score}</p>
+          )}
+          <ol className="mt-2 space-y-1">
+            {board.slice(0, 3).map((row, i) => (
+              <li
+                key={`${row.from}-${row.at}`}
+                className="flex justify-between gap-3 font-mono text-[11px] text-muted"
+              >
+                <span>
+                  {i + 1} {row.name}
+                </span>
+                <span className="tabular-nums text-fg">{row.score}</span>
+              </li>
+            ))}
+          </ol>
+        </div>
+
+        <div
+          className={cn(blockClass(PAGE_BLOCKS.decision), "sm:col-span-2")}
+          data-testid="mcp-block-decision"
+        >
+          <p className="font-mono text-[10px] text-accent">{PAGE_BLOCKS.decision}</p>
+          <p className="mt-2 text-[10px] font-medium uppercase tracking-wide text-subtle">
+            {t("mcp.decision")}
+          </p>
+          {decision ? (
+            <>
+              <p className="mt-2 text-sm leading-relaxed">
+                {decision.choice}
+                {decision.confidence === null
+                  ? ""
+                  : ` · ${t("jev.confidence")} ${decision.confidence.toFixed(2)}`}
+              </p>
+              <div className="mt-2 grid gap-1">
+                {decision.probabilities.map((row) => (
+                  <div
+                    key={row.label}
+                    className="grid grid-cols-[64px_1fr_44px] items-center gap-2"
+                  >
+                    <span className="truncate font-mono text-[10px] text-subtle">{row.label}</span>
+                    <span className="h-1 overflow-hidden rounded-full bg-surface">
+                      <span
+                        className="block h-full bg-accent"
+                        style={{ width: `${Math.round(Math.min(1, row.value) * 100)}%` }}
+                      />
+                    </span>
+                    <span className="text-right font-mono text-[10px] tabular-nums text-muted">
+                      {row.value.toFixed(2)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : (
+            <p className="mt-2 text-xs text-muted">{t("mcp.decisionEmpty")}</p>
+          )}
+          {lastTool ? (
+            <p className="mt-2 font-mono text-[10px] text-accent">
+              {t("mcp.lastTool", { tool: lastTool })}
+            </p>
+          ) : null}
         </div>
       </div>
-
-      <div className="mt-4 rounded-lg bg-raised p-4 shadow-[var(--shadow-border)]">
-        <p className="text-[10px] font-medium uppercase tracking-wide text-subtle">
-          {t("mcp.decision")}
-        </p>
-        {decision ? (
-          <>
-            <p className="mt-2 text-sm leading-relaxed">
-              {decision.choice}
-              {decision.confidence === null
-                ? ""
-                : ` · ${t("jev.confidence")} ${decision.confidence.toFixed(2)}`}
-            </p>
-            <div className="mt-2 grid gap-1">
-              {decision.probabilities.map((row) => (
-                <div key={row.label} className="grid grid-cols-[64px_1fr_44px] items-center gap-2">
-                  <span className="truncate font-mono text-[10px] text-subtle">{row.label}</span>
-                  <span className="h-1 overflow-hidden rounded-full bg-surface">
-                    <span
-                      className="block h-full bg-accent"
-                      style={{ width: `${Math.round(Math.min(1, row.value) * 100)}%` }}
-                    />
-                  </span>
-                  <span className="text-right font-mono text-[10px] tabular-nums text-muted">
-                    {row.value.toFixed(2)}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </>
-        ) : (
-          <p className="mt-2 text-xs text-muted">{t("mcp.decisionEmpty")}</p>
-        )}
-        {lastTool ? (
-          <p className="mt-2 font-mono text-[10px] text-accent">
-            {t("mcp.lastTool", { tool: lastTool })}
-          </p>
-        ) : null}
-      </div>
-
-      <ol className="mt-4 space-y-1.5">
-        {board.slice(0, 3).map((row, i) => (
-          <li
-            key={`${row.from}-${row.at}`}
-            className="flex justify-between gap-3 font-mono text-[11px] text-muted"
-          >
-            <span>
-              {i + 1} {row.name}
-            </span>
-            <span className="tabular-nums text-fg">{row.score}</span>
-          </li>
-        ))}
-      </ol>
 
       <details className="mt-4">
         <summary className="cursor-pointer text-xs text-muted">{t("mcp.viewJson")}</summary>
@@ -211,7 +258,7 @@ function AgentPane() {
               {t("mcp.consent", {
                 tool: consent.tool,
                 to: consent.to,
-                n: formatBem(consent.priceBem, 3),
+                n: formatBnb(consent.priceBem),
               })}
             </p>
             {consentQueue > 0 ? (

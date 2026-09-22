@@ -3,7 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { useT } from "@/lib/i18n";
 import { SERVICES } from "@/lib/tape/catalog";
 import { useTape } from "@/lib/tape/store";
-import { cn, formatBem } from "@/lib/utils";
+import { cn, formatBnb } from "@/lib/utils";
 
 export function ServiceRail({ active }: { active?: string }) {
   const t = useT();
@@ -51,7 +51,7 @@ export function ServiceRail({ active }: { active?: string }) {
               {t(`svc.${s.slug}.headline`)}
             </div>
             <div className="mt-2 font-mono text-[10px] tabular-nums text-subtle">
-              {t("svc.balance", { n: formatBem(balances[s.endpoint] ?? 0, 2) })}
+              {t("svc.balance", { n: formatBnb(balances[s.endpoint] ?? 0) })}
             </div>
           </Link>
         );

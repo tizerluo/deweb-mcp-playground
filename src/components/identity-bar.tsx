@@ -3,7 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { TapeMark } from "@/components/mark";
 import { LOCALES, useLocale, useI18n, useT } from "@/lib/i18n";
 import { useTape } from "@/lib/tape/store";
-import { cn, formatBem, formatBlock } from "@/lib/utils";
+import { cn, formatBnb, formatBlock } from "@/lib/utils";
 
 export function IdentityBar() {
   const t = useT();
@@ -36,9 +36,9 @@ export function IdentityBar() {
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 font-mono text-xs text-muted">
           <span className="text-fg">{identity.endpoint}</span>
           <span className="tabular-nums text-fg">
-            {formatBem(bem)} BEM
+            {formatBnb(bem)} BNB
             {locked > 0 ? (
-              <span className="ml-1.5 text-warn">{t("locked", { n: formatBem(locked, 3) })}</span>
+              <span className="ml-1.5 text-warn">{t("locked", { n: formatBnb(locked) })}</span>
             ) : null}
           </span>
           <span className="tabular-nums">blk {formatBlock(block)}</span>

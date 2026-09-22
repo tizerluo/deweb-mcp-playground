@@ -19,7 +19,7 @@ export type RoundStats = {
   replied: number;
   /** Ticks whose move was JEV's own pick. */
   adopted: number;
-  /** BEM that actually left the wallet this round (a refunded escrow is not a spend). */
+  /** BNB that actually left the wallet this round (a refunded escrow is not a spend). */
   spent: number;
   latencySum: number;
   /** Replies that carried a latency number (the average's denominator). */
@@ -41,7 +41,7 @@ export const EMPTY_STATS: RoundStats = {
 export type SettledDecision = {
   status: DecisionStatus;
   source: "jev" | "local";
-  /** BEM charged for this decision (0 when nothing was sent, or the escrow was refunded). */
+  /** BNB charged for this decision (0 when nothing was sent, or the escrow was refunded). */
   charge: number;
   latencyMs: number | null;
 };
@@ -79,7 +79,7 @@ export function averageLatencyMs(stats: RoundStats): number | null {
   return Math.round(stats.latencySum / stats.latencyCount);
 }
 
-/** BEM is a currency: keep the counters off float noise. */
+/** BNB is a currency: keep the counters off float noise. */
 function roundBem(value: number): number {
   return Math.round(value * 1e6) / 1e6;
 }

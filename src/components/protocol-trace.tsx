@@ -75,7 +75,7 @@ export function ProtocolTrace() {
                 </p>
                 <p className="mt-0.5 font-mono text-[10px] text-subtle">
                   {shortHex(m.digest, 4, 4)}
-                  {m.paidBem ? ` · ${m.paidBem} BEM` : ""}
+                  {m.paidBem ? ` · ${m.paidBem} BNB` : ""}
                   {m.ref ? ` · ref ${shortHex(m.ref, 4, 4)}` : ""}
                 </p>
               </li>

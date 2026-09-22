@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { AiPanel } from "@/components/ai/ai-panel";
 import { SnakeDemo } from "@/components/jev/snake-demo";
 import { CarDemo } from "@/components/jev/car-demo";
 import { Badge } from "@/components/ui/badge";
@@ -9,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { useT } from "@/lib/i18n";
 import { SERVICES, serviceBySlug } from "@/lib/tape/catalog";
 import { useTape } from "@/lib/tape/store";
-import { cn, formatBem, formatUsd } from "@/lib/utils";
+import { cn, formatBnb, formatClock, formatUsd } from "@/lib/utils";
 import type { ServiceDef } from "@/lib/tape/types";
 
 export function CallWorkspace({ slug }: { slug: string }) {
@@ -40,8 +41,8 @@ export function CallWorkspace({ slug }: { slug: string }) {
       </header>
       <div className="mt-6">
         {svc.slug === "price" ? <PricePanel svc={svc} /> : null}
-        {svc.slug === "jev" ? <JevPanel svc={svc} /> : null}
-        {svc.slug === "game" ? <GamePanel svc={svc} /> : null}
+        {svc.slug === "jev" ? <AiPanel /> : null}
+        {svc.slug === "game" ? <GameWorkspace svc={svc} /> : null}
         {svc.slug === "payment" ? <PayPanel svc={svc} /> : null}
       </div>
     </section>
@@ -106,42 +107,54 @@ function PricePanel({ svc }: { svc: ServiceDef }) {
         </div>
         <p className="mt-3 text-xs text-subtle">{t("price.hint")}</p>
       </div>
-      <pre className="overflow-auto rounded-lg bg-raised p-4 font-mono text-xs leading-relaxed text-muted shadow-[var(--shadow-border)]">
-        {JSON.stringify(
-          price?.ok
-            ? {
-                path: "/data/price.json",
-                pair: "BEM/USDT",
-                usd: price.usd,
-                change24h: price.change24h,
-                liquidityUsd: Math.round(price.liquidityUsd),
-                fdv: Math.round(price.fdv),
-                source: price.source,
-              }
-            : {
-                path: "/data/price.json",
-                status: "unavailable",
-                reason: priceError?.reason ?? "loading",
-                http: priceError?.status,
-              },
-          null,
-          2,
-        )}
-      </pre>
+      <div className="grid content-start gap-2">
+        <p className="text-xs font-medium text-muted">{t("price.fileTitle")}</p>
+        <pre className="overflow-auto rounded-lg bg-raised p-4 font-mono text-xs leading-relaxed text-muted shadow-[var(--shadow-border)]">
+          {JSON.stringify(
+            price?.ok
+              ? {
+                  path: "/data/price.json",
+                  pair: "BEM/USDT",
+                  usd: price.usd,
+                  change24h: price.change24h,
+                  liquidityUsd: Math.round(price.liquidityUsd),
+                  fdv: Math.round(price.fdv),
+                  source: price.source,
+                }
+              : {
+                  path: "/data/price.json",
+                  status: "unavailable",
+                  reason: priceError?.reason ?? "loading",
+                  http: priceError?.status,
+                },
+            null,
+            2,
+          )}
+        </pre>
+        {/* The stamp belongs to a read that worked: a failed attempt has no
+            reading to date, and the panel above already says it failed. */}
+        {price?.ok ? (
+          <p className="font-mono text-[10px] text-subtle" data-testid="price-fetched-at">
+            {t("price.fetchedAt", { time: formatClock(price.fetchedAt) })}
+          </p>
+        ) : null}
+      </div>
     </div>
   );
 }
 
-function JevPanel({ svc }: { svc: ServiceDef }) {
+/**
+ * The Saves stall: the two games are the demo (JEV decides, the code keeps the
+ * books, every step is a letter), and the ledger below is the stall's own
+ * service — write a score by hand, read the board back.
+ */
+function GameWorkspace({ svc }: { svc: ServiceDef }) {
   const t = useT();
-  const method = svc.methods[0];
+  const decide = svc.methods.find((m) => m.name === "decide");
   return (
     <div className="grid gap-6">
       <p className="font-mono text-xs text-subtle">
-        {t("jev.method", {
-          name: method?.name ?? "decide",
-          n: formatBem(method?.priceBem ?? 0, 3),
-        })}
+        {t("jev.method", { name: decide?.name ?? "decide" })}
       </p>
       <p className="max-w-2xl text-sm leading-relaxed text-muted">{t("jev.panel.lead")}</p>
       <div className="grid gap-2 border-t border-line pt-4">
@@ -155,6 +168,9 @@ function JevPanel({ svc }: { svc: ServiceDef }) {
           {t("jev.demo.two")}
         </h3>
         <CarDemo />
+      </div>
+      <div className="border-t border-line pt-4">
+        <GamePanel svc={svc} />
       </div>
     </div>
   );
@@ -205,7 +221,7 @@ function GamePanel({ svc }: { svc: ServiceDef }) {
               else toast.success(t("game.saved"));
             }}
           >
-            {t("game.save", { n: formatBem(svc.methods[0].priceBem, 2) })}
+            {t("game.save", { n: formatBnb(svc.methods[0].priceBem) })}
           </Button>
           <Button
             variant="secondary"
@@ -303,7 +319,7 @@ function PayPanel({ svc }: { svc: ServiceDef }) {
             else toast.success(t("pay.ok"));
           }}
         >
-          {t("pay.send", { n: formatBem(fee, 3) })}
+          {t("pay.send", { n: formatBnb(fee) })}
         </Button>
       </div>
     </div>

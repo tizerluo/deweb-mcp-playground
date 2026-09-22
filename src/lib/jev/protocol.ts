@@ -92,7 +92,7 @@ export function isJevTransient(reason: JevFailureReason): boolean {
 
 /**
  * Why a decision did not come from JEV: a provider failure, or the
- * playground's own escrow refusing the send (no BEM left). The UI localizes
+ * playground's own escrow refusing the send (no BNB left). The UI localizes
  * both through the same `jev.err.<reason>` keys.
  */
 export type JevDecisionReason = JevFailureReason | "insufficient_bem";

@@ -82,6 +82,19 @@ export function errorDetail(error: unknown): string | undefined {
   return error instanceof CallError ? error.detail : undefined;
 }
 
+/**
+ * The machine reason behind a failure, for a caller that has to *branch* on
+ * it rather than show it. A classified upstream failure answers with its own
+ * reason (`quota`, `no_key`, `upstream`, …) and anything else with its code
+ * (`lowBem`, `busy`, …); null means the error never was a `CallError` — the
+ * call never reached a provider, so there is no upstream reason to name.
+ */
+export function errorReason(error: unknown): string | null {
+  if (!(error instanceof CallError)) return null;
+  if ((error.code === "jev" || error.code === "price") && error.detail) return error.detail;
+  return error.code;
+}
+
 /** Placeholder values the message key needs (only `err.lowBem` takes one). */
 export function errorVars(error: unknown): Record<string, string | number> | undefined {
   if (error instanceof CallError && error.code === "lowBem" && error.detail) {

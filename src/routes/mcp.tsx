@@ -22,6 +22,10 @@ function McpPage() {
               {t("mcp.title")}
             </h1>
             <p className="mt-1 text-xs text-muted">{t("mcp.lead")}</p>
+            {/* The order matters: a visitor who starts with jev_decide sees a
+                confirmation before they have seen either tool work, and reads
+                the prompts as friction rather than as the point. */}
+            <p className="mt-1 text-xs text-muted">{t("mcp.tryOrder")}</p>
           </div>
           <Link
             to="/spec"

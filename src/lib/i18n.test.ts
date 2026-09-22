@@ -12,7 +12,9 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { LOCALES, MESSAGES, htmlLang, matchAcceptLanguage, parseLocale, t } from "./i18n.ts";
+import { MESSAGES, LOCALES, htmlLang, matchAcceptLanguage, parseLocale, t } from "./i18n.ts";
+import { serviceBySlug } from "./tape/catalog.ts";
+import { formatBnb } from "./utils.ts";
 
 const LOCALE_IDS = ["zh", "en", "ja", "ko"] as const;
 const REPO = fileURLToPath(new URL("../../", import.meta.url));
@@ -92,6 +94,45 @@ describe("language tables", () => {
     }
   });
 
+  it("keeps the pinned copy of the four-language change set", () => {
+    // The review's P2-01: C-11 landed in zh/en only, and the parity tests above
+    // cannot see it — the keys are all there, the ja/ko strings just still say
+    // something else. These are the strings from `.review/copy-4lang-v1.md`,
+    // pinned verbatim so a stale translation fails the suite instead.
+    assert.equal(
+      MESSAGES.zh["svc.payment.blurb"],
+      "内容站的收银台：指定收款容器和金额，服务记账并回执。",
+    );
+    assert.equal(
+      MESSAGES.en["svc.payment.blurb"],
+      "A till for content sites: name a payee container and an amount; the service books it and receipts.",
+    );
+    assert.equal(
+      MESSAGES.ja["svc.payment.blurb"],
+      "コンテンツサイトのレジ：受取コンテナと金額を指定すると、記帳して領収を返す。",
+    );
+    assert.equal(
+      MESSAGES.ko["svc.payment.blurb"],
+      "콘텐츠 사이트의 계산대: 수취 컨테이너와 금액을 지정하면 기장하고 영수증을 돌려준다.",
+    );
+  });
+
+  it("quotes the price the chat call really charges", () => {
+    // C-22 promises the paid continuation after the trial ("about 0.0003 BNB
+    // per call") and the ledger charges the catalog's own price. A price the
+    // sentence does not quote is a false statement on the page, so the two are
+    // checked against each other rather than trusted to stay in step.
+    const chat = serviceBySlug("jev")?.methods.find((method) => method.name === "chat");
+    assert.ok(chat, "the AI-call service has a chat method");
+    const price = formatBnb(chat.priceBem);
+    for (const locale of LOCALE_IDS) {
+      assert.ok(
+        MESSAGES[locale]["ai.quota.free"]?.includes(price),
+        `${locale} does not quote the ${price} BNB the ledger charges`,
+      );
+    }
+  });
+
   it("substitutes what it is given and leaves no placeholder behind", () => {
     for (const [key, value] of Object.entries(MESSAGES.en)) {
       if (placeholders(value).length > 0) continue;
@@ -154,9 +195,12 @@ describe("language tables", () => {
       const used = values.filter(([, value]) => value.includes(chosen));
       assert.ok(used.length >= 4, `${locale} should spell its fallback term ${chosen}`);
     }
-    // The spots the review named, one per language that had drifted.
+    // The spots the review named, one per language that had drifted. The ja
+    // spot used to be the low-BEM notice; since the trial replaced it, that
+    // notice no longer talks about falling back at all, so the ja check sits on
+    // the note that still describes the degradation.
     assert.ok(MESSAGES.ja["home.note"]!.includes("降格"));
-    assert.ok(MESSAGES.ja["jev.lowBem"]!.includes("降格"));
+    assert.ok(MESSAGES.ja["jev.car.note"]!.includes("降格"));
     assert.ok(MESSAGES.ko["jev.car.note"]!.includes("대체"));
   });
 

@@ -1,4 +1,4 @@
-import { serviceBySlug } from "./catalog";
+import { serviceBySlug } from "./catalog.ts";
 
 export type JsonSchema = {
   type: "object";
@@ -57,6 +57,21 @@ export const MCP_TOOLS: McpToolDef[] = [
   },
 ];
 
+/**
+ * Which registered tool fills which block of the site's own page.
+ *
+ * The pane labels its blocks with these names: the page review found the
+ * price / score / decision reading as three unrelated widgets, when each of
+ * them is the visible face of one registered tool. They live next to the tool
+ * list so a renamed tool cannot leave a block wearing a stale name, and
+ * `mcp-manifest.test.ts` pins that every block names a tool the site declares.
+ */
+export const PAGE_BLOCKS = {
+  price: "get_price",
+  score: "save_score",
+  decision: "jev_decide",
+} as const;
+
 export const MCP_MANIFEST = {
   webmcp: true,
   endpoint: "#8801@0",
@@ -71,7 +86,7 @@ export function isFileVia(via: McpVia): via is Extract<McpVia, { file: string }>
 /**
  * What a tool actually costs, read from the service catalog — the single
  * source of truth for prices. The confirmation dialog has to name the same
- * number the call books, and a hardcoded 0 next to a 0.01 BEM charge is a lie
+ * number the call books, and a hardcoded 0 next to a real charge is a lie
  * the user only discovers on their balance.
  */
 export function toolPriceBem(via: McpVia): number {

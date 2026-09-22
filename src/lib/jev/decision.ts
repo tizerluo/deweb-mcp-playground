@@ -54,7 +54,7 @@ export type JevRound = {
   answers: Record<string, unknown> | null;
   model: string | null;
   latencyMs: number;
-  /** BEM that actually left the wallet (0 when the escrow was refunded). */
+  /** BNB that actually left the wallet (0 when the escrow was refunded). */
   charge: number;
   cached: boolean;
   envelope: {

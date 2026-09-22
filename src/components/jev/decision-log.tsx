@@ -1,10 +1,10 @@
 import { Badge } from "@/components/ui/badge";
 import { useT } from "@/lib/i18n";
 import { STATUS_KEY, type DecisionView } from "@/lib/jev/decision";
-import { messageRowKind, notSentReasonKey } from "@/lib/jev/rows";
+import { messageRowKind, messageStatusKey, notSentReasonKey } from "@/lib/jev/rows";
 import type { RoundStats } from "@/lib/jev/stats";
 import { averageLatencyMs } from "@/lib/jev/stats";
-import { cn, formatBem, shortHex } from "@/lib/utils";
+import { cn, shortHex } from "@/lib/utils";
 
 /**
  * One decision, as the page tells it: what the options were, what JEV answered,
@@ -31,8 +31,6 @@ export type DecisionRow = {
     reqDigest: string;
     resDigest: string | null;
   };
-  /** BEM that actually left the wallet (0 when the escrow was refunded). */
-  charge: number;
   /** The reply arrived after the window had already been driven. */
   late: boolean;
   message: string;
@@ -236,10 +234,15 @@ export function MessageStrip({ rows }: { rows: DecisionRow[] }) {
                     : ` · ${t("jev.messages.noReply")}`}
                 </p>
                 <p className="mt-1 font-mono text-[10px] text-subtle">
-                  {t("jev.messages.paid", { n: formatBem(row.envelope.paidBem, 3) })}
-                  {row.charge > 0
-                    ? ` · ${t("jev.messages.charged", { n: formatBem(row.charge, 3) })}`
-                    : ` · ${t("jev.messages.refunded")}`}
+                  {t("jev.messages.paid")}
+                  {/* One sentence, and only when the row has an outcome to
+                      report: a reply (accepted) or money without one
+                      (refunded). A free letter that got no reply says nothing
+                      here — the digest line above already says so. */}
+                  {(() => {
+                    const key = messageStatusKey(row);
+                    return key ? ` · ${t(key)}` : "";
+                  })()}
                   {row.decision.latencyMs === null ? "" : ` · ${row.decision.latencyMs} ms`}
                 </p>
                 {row.late ? (
@@ -272,12 +275,11 @@ export function DecisionRowStats({ stats }: { stats: RoundStats }) {
   });
   return (
     <div className="@container" data-testid="jev-stats">
-      <dl className="grid grid-cols-2 gap-2 @[420px]:grid-cols-3 @[640px]:grid-cols-5">
+      <dl className="grid grid-cols-2 gap-2 @[420px]:grid-cols-3 @[640px]:grid-cols-4">
         <Stat label={t("jev.stats.decisions")} value={String(stats.ticks)} />
         <Stat label={t("jev.stats.jev")} value={String(stats.replied)} />
         <Stat label={t("jev.stats.adopted")} value={String(stats.adopted)} />
         <Stat label={t("jev.stats.avg")} value={avg === null ? "—" : `${avg} ms`} />
-        <Stat label={t("jev.stats.spent")} value={`${formatBem(stats.spent, 3)} BEM`} />
       </dl>
       <p className="mt-2 font-mono text-[10px] text-subtle" data-testid="jev-stats-breakdown">
         {breakdown}

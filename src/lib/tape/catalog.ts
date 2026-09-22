@@ -1,5 +1,12 @@
 import type { ServiceDef } from "./types";
 
+/**
+ * Money is BNB: the playground's own convention (see the copy table) — every
+ * amount a visitor can see is denominated in BNB, from the wallet balance to
+ * the per-call price. `priceBem`/`startBem` keep their old field names because
+ * the quote service really does read the BEM/USDT pair; only the playground's
+ * own ledger moved to BNB.
+ */
 export const USER: { identity: import("./types").Identity; startBem: number } = {
   identity: {
     endpoint: "#8801@0",
@@ -7,7 +14,7 @@ export const USER: { identity: import("./types").Identity; startBem: number } = 
     tokenId: 8801,
     cpu: 0,
   },
-  startBem: 12,
+  startBem: 0.05,
 };
 
 export const SERVICES: ServiceDef[] = [
@@ -35,8 +42,16 @@ export const SERVICES: ServiceDef[] = [
     tokenId: 9104,
     methods: [
       {
+        // The games' picker. Its price is the paid continuation the AI panel
+        // quotes ("about 0.0003 BNB per call"); the free trial covers the calls
+        // the panel and the games actually make.
         name: "decide",
-        priceBem: 0.01,
+        priceBem: 0.0003,
+        timeoutBlocks: 12,
+      },
+      {
+        name: "chat",
+        priceBem: 0.0003,
         timeoutBlocks: 12,
       },
     ],
@@ -51,7 +66,7 @@ export const SERVICES: ServiceDef[] = [
     methods: [
       {
         name: "save",
-        priceBem: 0.01,
+        priceBem: 0.0002,
         timeoutBlocks: 12,
       },
       {
@@ -71,7 +86,7 @@ export const SERVICES: ServiceDef[] = [
     methods: [
       {
         name: "pay",
-        priceBem: 0.005,
+        priceBem: 0.0002,
         timeoutBlocks: 16,
       },
     ],

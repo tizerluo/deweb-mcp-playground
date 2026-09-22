@@ -10,7 +10,7 @@ import {
 } from "@/components/jev/decision-log";
 import { useT } from "@/lib/i18n";
 import { candidateLabels } from "@/lib/jev/car/candidates";
-import { createCar, type CarState } from "@/lib/jev/car/engine";
+import { createCar, CAR, type CarState } from "@/lib/jev/car/engine";
 import { createCarRunner, type CarTick } from "@/lib/jev/car/loop";
 import { carProbabilityRows } from "@/lib/jev/car/question";
 import { createTrack } from "@/lib/jev/car/track";
@@ -18,7 +18,7 @@ import { carDecisionView, carStatusKey } from "@/lib/jev/car/view";
 import type { JevRound } from "@/lib/jev/decision";
 import { EMPTY_STATS, recordDecision, recordLateReply, type RoundStats } from "@/lib/jev/stats";
 import { useTape } from "@/lib/tape/store";
-import { cn, formatBem } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 /** Decision periods offered by the control, inside the brief's 300–500 ms. */
 const PERIOD_CHOICES = [300, 400, 500] as const;
@@ -37,13 +37,17 @@ const decisionView = carDecisionView;
  *
  * The window loop lives in `@/lib/jev/car/loop` — Pause / Reset / unmount
  * cancel by epoch, which is testable only because the loop owns no React state.
+ *
+ * Driving is free: a fresh run claims one of the day's free rounds before the
+ * first window, and every window is a TAP-10 round trip on the hub.
  */
 export function CarDemo() {
   const t = useT();
   const identity = useTape((s) => s.identity);
-  const bem = useTape((s) => s.bem);
-  const faucet = useTape((s) => s.faucet);
   const jevDecision = useTape((s) => s.jevDecision);
+  const quota = useTape((s) => s.quota);
+  const claimRound = useTape((s) => s.claimRound);
+  const refreshQuota = useTape((s) => s.refreshQuota);
 
   const track = useMemo(() => createTrack(), []);
   const [car, setCar] = useState<CarState>(() => createCar(track));
@@ -56,6 +60,8 @@ export function CarDemo() {
   // at MAX_ROWS, so a spend or an average read off it would drift.
   const [stats, setStats] = useState<RoundStats>(EMPTY_STATS);
   const [latest, setLatest] = useState<CarTick | null>(null);
+  /** A run the trial refused, and why: the banner says so and no window starts. */
+  const [refused, setRefused] = useState<"quota" | "network" | null>(null);
 
   const carRef = useRef<CarState>(car);
   const periodRef = useRef<number>(DEFAULT_PERIOD_MS);
@@ -100,7 +106,6 @@ export function CarDemo() {
         reqDigest: "",
         resDigest: null,
       },
-      charge: tick.round?.charge ?? 0,
       late: false,
       message: tick.round?.message ?? "",
     };
@@ -130,7 +135,6 @@ export function CarDemo() {
               ? {
                   ...entry,
                   late: round.ok,
-                  charge: round.charge,
                   message: round.message,
                   envelope: round.envelope,
                 }
@@ -169,6 +173,33 @@ export function CarDemo() {
 
   // Leaving the page cancels the window in flight: nothing writes after unmount.
   useEffect(() => () => runner.pause(), [runner]);
+
+  // The trial counter is the server's; read it once so the line under the
+  // board shows a real number rather than a placeholder.
+  useEffect(() => {
+    void refreshQuota();
+  }, [refreshQuota]);
+
+  /**
+   * Start (or resume) the drive. A fresh run — nothing on the log yet, which is
+   * also what Reset leaves behind — claims one of the day's free rounds before
+   * the first window; a resume claims nothing. A refusal is shown, not
+   * swallowed: `quota` is the server saying the day's rounds are gone, a claim
+   * that never reached the server refuses as well (an uncounted window would
+   * spend the shared key), and only the server's own `no_key` still starts —
+   * that run degrades by itself.
+   */
+  const begin = async () => {
+    if (rows.length === 0) {
+      const claim = await claimRound();
+      if (!claim.ok && claim.reason !== "no_key") {
+        setRefused(claim.reason === "quota" ? "quota" : "network");
+        return;
+      }
+    }
+    setRefused(null);
+    runner.start();
+  };
 
   const latestDecision = latest ? decisionView(latest.decision) : null;
   /** What the action that was played is predicted to do — its own rollout. */
@@ -233,7 +264,7 @@ export function CarDemo() {
                 {t("jev.control.pause")}
               </Button>
             ) : (
-              <Button size="sm" onClick={() => runner.start()}>
+              <Button size="sm" onClick={() => void begin()}>
                 {rows.length === 0 ? t("jev.car.control.start") : t("jev.car.control.resume")}
               </Button>
             )}
@@ -267,7 +298,9 @@ export function CarDemo() {
             <span>{t("jev.car.distance", { n: Math.round(car.distance) })}</span>
             <span>{t("jev.car.offTrack", { n: car.offTrackCount })}</span>
             <span>{t("jev.car.window", { n: effectiveMs })}</span>
-            <span>{t("jev.wallet", { n: formatBem(bem, 2) })}</span>
+            <span>{t("quota.roundTime", { n: Math.round(car.steps * CAR.dt) })}</span>
+            {/* Server-numbered, so it appears only after the server answers. */}
+            {quota ? <span>{t("quota.daily", { n: quota.left })}</span> : null}
           </div>
 
           {sensors ? (
@@ -369,12 +402,11 @@ export function CarDemo() {
             ) : null}
           </div>
 
-          {bem < 0.05 ? (
-            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-raised px-3 py-2 shadow-[var(--shadow-border)]">
-              <p className="text-xs text-warn">{t("jev.lowBem")}</p>
-              <Button size="sm" variant="secondary" onClick={faucet}>
-                {t("faucet")}
-              </Button>
+          {refused || quota?.left === 0 ? (
+            <div className="rounded-lg bg-raised px-3 py-2 shadow-[var(--shadow-border)]">
+              <p className="text-xs text-warn">
+                {refused === "network" ? t("jev.err.network") : t("jev.lowBem")}
+              </p>
             </div>
           ) : null}
         </div>
